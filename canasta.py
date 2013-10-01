@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+__disc__=\
 """
    Canasta - Collector log Analyzer by Ales Stibal
    Copyright: Ales Stibal, astibal@fortinet.com, Fortinet L2 TAC (c) 2013
@@ -10,7 +11,7 @@
    License: BSD original license
 """
 
-__version__="0.1.4-1"
+__version__="0.1.4b"
 
 import sys
 import time
@@ -93,10 +94,20 @@ func_fortigate_io_accepted=r'accepting one FortiGate connection'
 # func_poller_debug_dcpoller=r'\[D\]\[DCPoller\].*'
 # func_poller_arrows=r'\[I\]\[[LD][SC]Poller\][^>]+>$'
 
-func_poller_dopoll=r'\[I\]\[LSPoller\]DoPolling\(ip=(?P<ip>[\d\w]+), host=(?P<fqdn>[\w\d./]+)\): r=(?P<r>\d+)'
-#func_poller_nsenum=r'[I][DCPoller]NSEnum([\w\d.]): r=\d+, e=\d+, R=\d+, T=\d+, H=0x[\da-fA-F]+'
+#[I][LSPoller]DoPolling(ip=2900510A, host=PC_D01/d3s011.lpti.le.grp): r=42
+func_poller_dopoll_end=r'\[I\]\[LSPoller\]DoPolling\(ip=(?P<ip>[\d\w]+), host=(?P<fqdn>[\w\d./]+)\): r=(?P<r>\d+)'
 
+#[I][LSPoller]DoPolling(ip=2900510A, host=PC_D01/d3s011.lpti.le.grp)-->
+func_poller_dopoll_begin=r'\[I\]\[LSPoller\]DoPolling\(ip=(?P<ip>[\d\w]+), host=(?P<fqdn>[\w\d./]+)\)-->'
 
+#[I][DCPoller]NSEnum(d5s08.lpp.le.grp): r=0, e=997, R=148, T=148, H=0x00095E46
+func_poller_nsenum=r'\[I\]\[DCPoller\]NSEnum\(([\w\d.]+)\): r=\d+, e=\d+, R=\d+, T=\d+, H=0x[\da-fA-F]+'
+
+#[D][DCPoller]SESI10: w=10.81.8.123, u=TPT567
+func_poller_entry=r'\[D]\[DCPoller\]([\w\d]+): w=(?P<wksta>[\d\w.]+), u=(?P<user>[\w\d]+)'
+
+#[I][LSPoller]PackMsg(w=10.81.8.124, u=TPT845, d=PC_D01, ip=2800510A, time=1357794964)
+func_poller_login=r'\[I]\[LSPoller\]PackMsg\(w=(?P<wksta>[\d\w.]+), u=(?P<user>[\w\d]+), d=(?P<domain>[\d\w.]+), ip=(?P<dc_ip>[\dA-F.]+), time=(?P<tstamp>[\d]+)\)'
 """
  GLOBAL LOGGING SETUP
 """
@@ -136,6 +147,7 @@ class Worker:
 
     def __init__(self,pid,workerset):
         self.pid = pid
+        self.sub_pid = 0
         self.log = []
         self.poller_log = []
         
@@ -151,6 +163,17 @@ class Worker:
         self.state_data = None
         # list of lines, per single state [[state_1_lines],[state_2_lines]]
         self.task_list = []
+
+        # create sub-worker for event poller:
+        #   event poller events are not parseable in this worker state, e.p. logs
+        #   follow their own state, thus creating poller sub-worker
+        
+        if workerset.pid == 0:
+            self.child_poller = Worker(pid,self)
+            self.child_poller.sub_pid = 1
+        else:
+            self.child_poller = None
+                
         
         # map of regular expressions idicating new cycle/state to roles
         self.new_state_events = {}
@@ -175,7 +198,7 @@ class Worker:
         self.new_state_events[line_start+func_dcagent_msg_received] = Worker.ROLE_DCAGENTIORECV
         self.new_state_events[line_start+func_update_groupcheck] = Worker.ROLE_UPDATERGROUP
         self.new_state_events[line_start+func_fortigate_io_accepted] = Worker.ROLE_FGTIOMUX
-        self.new_state_events[line_start+func_poller_dopoll] = Worker.ROLE_DOPOLL
+        self.new_state_events[line_start+func_poller_dopoll_begin] = Worker.ROLE_DOPOLL
 
         # ignored lines, which are duplicating info, or just unecessarily screw up parsing :)
         #self.new_state_events[line_start+func_poller_debug_dcpoller] = Worker.ROLE_IGNORED
@@ -210,7 +233,10 @@ class Worker:
         self.state_role = role
 
     def update_poller(self,line):
-        self.poller_log.append(line.strip())
+        if self.child_poller != None:
+            self.child_poller.update(line)
+            #print "poller: ",self.pid,line
+              
     
     """
     update: let update worker with line from the log. 
@@ -218,11 +244,12 @@ class Worker:
     """     
     def update(self, line):
         
-        if re.search('\[[DL][CS]Poller\]',line):
+        # check if we have poller sub-worker, otherwise continue
+        if re.search('\[[DL][CS]Poller\]',line) and self.child_poller:
             self.update_poller(line)
             return None
-    
-        self.log.append(line.strip())
+
+        self.log.append(line.strip())    
         current_index = len(self.log)-1
         #logger_state.debug(" ... current index:" + str(current_index))
         
@@ -267,21 +294,28 @@ class Worker:
     def handle_finish(self):
         task_data = {}
         task_data['pid'] = self.pid
+        task_data['sub_pid'] = self.sub_pid
         task_data['role'] = self.state_role
         task_data['data'] = self.state_data
-        task_data['id'] = len(self.task_list)
-        task_data['gid'] = "%s-%s" % (task_data['pid'],task_data['id'])
+        task_data['id'] = len(self.task_list)      
+        task_data['gid'] = "%s-%s-%s" % (task_data['pid'],task_data['sub_pid'],task_data['id'])
         task_data['log'] = []
         for li in range(self.state_index_a,len(self.log)-1):
             logger_state.debug("+++ " + self.log[li])
             task_data['log'].append(self.log[li])
         
         self.task_list.append(task_data)
-        self.parent.finish_task(task_data)
+
+        self.finish_task(task_data)
+            
         logger_state.debug("+++ ... task completed: id=%d, lines=%d, line index=(%d,%d)" % 
                 (task_data['id'],len(task_data['log']),self.state_index_a,len(self.log)-1))
 
-      
+
+    def finish_task(self, task_data):
+        if self.parent != None:
+            self.parent.finish_task(task_data)
+    
 
 class Workers:
     """
@@ -292,6 +326,8 @@ class Workers:
     
     def __init__(self,ca_log):
     
+        # for worker: if parent.pid == 0, then it's topmost worker
+        self.pid = 0
         self.ca_log = ca_log
         self._workers = {}
         self.analyzer = Analyzer(self)
@@ -322,14 +358,15 @@ class Workers:
         FIXME: new implementation should use sqlite
         """        
         # fill the data for the current task, since we hit the beginning the new one
-        t_id_this = "%s-%s" % (task_data['pid'],task_data['id'])
+        t_id_this = "%s-%s-%s" % (task_data['pid'],task_data['sub_pid'],task_data['id'])
         self.task_db[t_id_this] = task_data
         
         
         # because we finish the task when the new one is recognized
-        t_id_next = "%s-%s" % (task_data['pid'],task_data['id']+1)
+        #t_id_next = "%s-%s" % (task_data['pid'],task_data['id']+1)
+        t_id_next = "%s-%s-%s" % (task_data['pid'],task_data['sub_pid'],task_data['id']+1)
         self.task_db_list.append(t_id_next)
-  
+        
     def analyze(self):
         count = 0
         delta = time.time()
@@ -503,7 +540,7 @@ class Analyzer:
         # example: self.chain['called']['44432-1'] = [... list of relevant task gids ...]
         
         # non-virtual (real) keys present in the regex groups. You can add virtual ones later by mapping
-        self.chain_keys = ['called','ip1','ip2','wksta','domain','user'] 
+        self.chain_keys = ['called','ip1','ip2','wksta','domain','user','dc_ip'] 
         for _k in self.chain_keys:
             self.chain[_k] = {}
     
@@ -746,9 +783,34 @@ class Analyzer:
             logger_analyzer.debug('Starting to analyze ip check task')
             result = self.analyze_ip_check(task_data)
             self.update_chain(result)
+        elif task_data['role']==Worker.ROLE_DOPOLL:
+            result = self.analyze_poller(task_data)
+            self.update_chain(result)
         else:
             pass
             #logger_analyzer.error('Unknown task role: %s' % (task_data['role'],))
+    
+    def analyze_poller(self, task_data):
+        gid = task_data['gid']
+        result = {}
+        result['gid'] = gid
+    
+        for l in task_data['log']:
+            m = re.match(line_start+func_poller_login,l)
+            if m:
+                logger_analyzer.debug("analyze_poller: matched func_poller_login")
+                r = m.groupdict()
+
+                r['dc_ip'] = Analyzer.hexip_to_str(r['dc_ip'])
+                
+                if re.match('\d+\.\d+\.\d+\.\d+',r['wksta']):
+                    logger_analyzer.debug("analyze_poller: wksta in form of IP adress")
+                    r['ip1'] = r['wksta']
+                
+                result = Analyzer.stack_dict(result,r)
+            
+        return result
+    
     
     def analyze_dcagent_msg(self, task_data):
         """
@@ -1159,7 +1221,17 @@ class Analyzer:
     @staticmethod
     def task_delay(t1, t2):
         return Analyzer.line_timedelta(t1['log'][-1],t2['log'][0])
-        
+
+    @staticmethod    
+    def hexip_to_str(t):
+
+        ip4 = int(t[0:2],16)
+        ip3 = int(t[2:4],16)
+        ip2 = int(t[4:6],16)
+        ip1 = int(t[6:8],16)
+
+        return  "%d.%d.%d.%d" % (ip1,ip2,ip3,ip4)
+    
     
     @staticmethod
     def chain_delays(task_list):
@@ -1182,12 +1254,14 @@ class Analyzer:
                 t2 = self.chain['called'][c][1]
                 d =  Analyzer.task_delay(self.workers.task_db[t1],self.workers.task_db[t2])
                 
+                # FIXME: those messages should be set to approriate level!!!
+                #        ... but also on appropriate place, stdout it's not appropriate place
                 if d > 120:
-                    logger_analyzer.critical("[ANAL]... huge delay in processing %s = %f" % (c,d))
+                    logger_analyzer.debug("[ANAL]... huge delay in processing %s = %f" % (c,d))
                 if d > 60:
-                    logger_analyzer.error("[ANAL]... big delay in processing %s = %f" % (c,d))
+                    logger_analyzer.debug("[ANAL]... big delay in processing %s = %f" % (c,d))
                 elif d > 30:
-                    logger_analyzer.warning("[ANAL]... noticeworthy delay in processing %s = %f" % (c,d))
+                    logger_analyzer.debug("[ANAL]... noticeworthy delay in processing %s = %f" % (c,d))
                 
                 logger_analyzer.debug("[ANAL]... delay in processing %s = %f" % (c,d))
                 
@@ -1311,7 +1385,7 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
         d = os.path.dirname(norm)
         f = os.path.basename(norm).split()[0]
         
-        pid, id = t_id.split('-')
+        pid, sub_pid, id = t_id.split('-')
         
         target = os.path.join(d,f + ".DEFAULT.log")
         
@@ -1391,12 +1465,10 @@ man_main = """
 --== CANASTA tool by Ales Stibal, Fortinet L2 TAC in Prague ==--  
 
 Important: Read bugs and limitations at the end of this manual page !!!
-
-So you are interested in better understanding how this script does work and how 
-you can use it efficiently. That is, indeed, The Right Thing(tm)!!! 
-
+Important: Read this manual, some options are not as obvious as one can expect.
 Important: All the result is ALWAYS chronologically ordered. You don't need 
-to worry Canasta will display ANYTHING out of order.
+to worry Canasta will display ANYTHING out of order. The ordering is based on
+timestamp when the task started.
 
 CANASTA is the tool for better analysis of Collector Agent logs (and FSAE/FSSO 
 in general in the future).
@@ -1457,10 +1529,13 @@ depending on which point of view you are interested in:
                        only, so splitting the lines into files is not needed.
                            
  --no-prefixes      :  In all cases (except "none" is used), the lines  are 
-                       prepended  by TASK ID. This task id consists of pair of 
-                       decimal numbers separated by hyphen, e.g. 12312-34. 
+                       prepended  by TASK ID. This task id consists of tuple of 
+                       decimal numbers separated by hyphen, e.g. 12312-0-34. 
                        This means the thread id is 12312, and the line belongs 
-                       to 34th  task processed by  the thread.
+                       to 34th  task processed by  the thread. Zero in the 
+                       middle is ID of tge sub-parser. Good example of 
+                       sub-parser is event poller parser.
+                       
                        For those who don't want to  have task-id at the every 
                        beginning of the line in files, please use this option. 
                        This will also prevent Canasta to separate tasks by two 
@@ -1568,8 +1643,6 @@ all of the tasks:
  =====================
  - Canasta can process only the DEBUG LEVEL logs. Other will show only incomplete
    and not reliable results.
-   
- - The poller events are silently dropped
  - Analyzer is still in development
 """
 
@@ -1659,6 +1732,9 @@ def main():
 
 
 try:        
+    #import cProfile
+    
+    #cProfile.run(main())
     main()
 except KeyboardInterrupt, e:
     logger_state.error("Interrupted!")
