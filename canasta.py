@@ -11,7 +11,7 @@ __disc__=\
    License: BSD original license
 """
 
-__version__="0.1.4b"
+__version__="0.1.4e"
 
 import sys
 import time
@@ -24,71 +24,138 @@ import os.path
 import json
 #import shlex
 
+import cmd
+
 from pprint import pprint
 from pprint import pformat
 
 import ipaddr
 
 line_start=r'(?P<timestamp>\d\d/\d\d/\d\d\d\d \d\d:\d\d:\d\d) +\[ *(?P<pid>\d+)\] +'
+r_line_start = re.compile(line_start)
 
 # ip check
 func_update_entry_ip=r'(?P<function>update entry)\((?P<param>[\w ]+)\): +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) +create time:(?P<create_time>\d+) +update time:(?P<update_time>\d+) +ip update time:(?P<ip_update_time>\d+) +workstation:(?P<wksta>[\w_.\-]+) +domain:(?P<domain>[\w_.-]+) +user:(?P<user>[\w_.-]+) +group:(?P<group>[\w_.,+=& \-]+)'
+r_func_update_entry_ip = re.compile(line_start+func_update_entry_ip)
 func_resolve_ip_internal=r'(?P<function>resolve_ip_internal): +workstation:(?P<fqdn>[\w.]+) +\[(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\] +time:(?P<duration>\d+)'
+r_func_resolve_ip_internal = re.compile(line_start+func_resolve_ip_internal)
 func_after_dns_checking=r'after (?P<function>DNS_checking):(?P<wksta>[\w.]+)'
+r_func_after_dns_checking = re.compile(line_start+func_after_dns_checking)
 func_before_dns_checking=r'before (?P<function>DNS_checking):(?P<wksta>[\w.]+)'
+r_func_before_dns_checking = re.compile(line_start+func_before_dns_checking)
 func_dns_query_valid=r'(?P<function>DnsQuery)\(\): (?P<status>[^:]+): +ip:(?P<ip_hex>[\da-fA-F]+)'
+r_func_dns_query_valid = re.compile(line_start+func_dns_query_valid)
 
 # wksta_check
 func_update_entry_workstation=r'(?P<function>update entry)\((?P<param>[\w ]+)\): +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) +create time:(?P<create_time>\d+) +update time:(?P<update_time>\d+) +workstation:(?P<wksta>[\w_.\-]+) +domain:(?P<domain>[\w_.-]+) +user:(?P<user>[\w_.-]+) +group:(?P<group>[\w_.,+=& \-]+)'
+r_func_update_entry_workstation = re.compile(line_start+func_update_entry_workstation)
+
 func_wksta_verify_ip=r'verify_ip: workstation:(?P<wksta>[\w._-]+) \[(?P<ip1>[\d.]+):(?P<ip2>[\d.]+)\] time:(?P<time>\d+)'
+r_func_wksta_verify_ip = re.compile(line_start+func_wksta_verify_ip)
 func_wksta_test=r'user:(?P<user>\w+) on domain:(?P<domain>\w+) sid:(?P<sid>[\w-]+)'
+r_func_wksta_test = re.compile(line_start+func_wksta_test)
 func_wksta_registry_error=r'cannot access registry keys:(?P<err_code>\w+)'
-func_wksta_still=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is still logged on to (?P<wksta>[\w-_.]+)'
-func_wksta_no_longer=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is no longer logged on to (?P<wksta>[\w-_.]+) \((?P<ip1>[\d.]+)\)'
+r_func_wksta_registry_error = re.compile(line_start+func_wksta_registry_error)
+#func_wksta_still=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is still logged on to (?P<wksta>[\w-_.]+)'
+func_wksta_still=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is still logged on to (?P<wksta>[\w\-_.]+)'
+r_func_wksta_still = re.compile(line_start+func_wksta_still)
+#func_wksta_no_longer=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is no longer logged on to (?P<wksta>[\w-_.]+) \((?P<ip1>[\d.]+)\)'
+func_wksta_no_longer=r'wksta_check: user:(?P<domain>[^\\]+)\\(?P<user>\w+) is no longer logged on to (?P<wksta>[\w\-_.]+) \((?P<ip1>[\d.]+)\)'
+r_func_wksta_no_longer = re.compile(line_start+func_wksta_no_longer)
 
 # DC Agent processing workers
 func_process_dcagent_events=r'process_dcagent_events called by worker:(?P<caller_pid>[\d]+)'
+r_func_process_dcagent_events = re.compile(line_start+func_process_dcagent_events)
 func_dcadgent_remove_q='dcagent packet: removed from queue, called:(?P<called>\d+) remain:(?P<remain>\d+)'
+r_func_dcadgent_remove_q = re.compile(line_start+func_dcadgent_remove_q)
+
+func_ntlm_begin='process_NTLM_requests called by worker:\d+'
+r_func_ntlm_begin = re.compile(line_start+func_ntlm_begin)
 #                       NTLM packet: removed from queue, called:31770355 remain:0
 func_ntlm_remove_q='NTLM packet: removed from queue, called:(?P<called>\d+) remain:(?P<remain>\d+)'
-func_logon_event=r'logon event\((?P<called_id>\d+)\): len:(?P<length>\d+) dc_ip:(?P<dc_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) time:(?P<dc_timestamp>\d+) len:\d+ data:(?P<wksta>[\w\d.]+)/(?P<domain>\w+)/(?P<user>[\w ]+) ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-func_logon_event_ex=r'logon event\((?P<called_id>\d+)\): len:(?P<length>\d+) dc_ip:(?P<dc_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) time:(?P<dc_timestamp>\d+) len:\d+ data:(?P<wksta>[\w\d.]+)/(?P<domain>\w+)/(?P<user>[\w ]+) ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-func_new_logon_0=r'(?P<function>new logon), +workstation:(?P<wksta>[\w.]+) +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-func_new_logon_1=r'(?P<function>new logon), +workstation:(?P<wksta>[\w.]+) +ip not changed +(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-func_ntlm_user=r'user:(?P<user>\w+)'
-func_ntlm_domain=r'domain:(?P<domain>[\w._-]+)'
-func_ntlm_wksta=r'workstation:(?P<wksta>[\w._-]+)'
+r_func_ntlm_remove_q = re.compile(line_start+func_ntlm_remove_q)
+func_logon_event=r'logon event\((?P<called>\d+)\): len:(?P<length>\d+) dc_ip:(?P<dc_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) time:(?P<dc_timestamp>\d+) len:\d+ data:(?P<wksta>[\w\d.-_]+)/(?P<domain>\w+)/(?P<user>[^\\ ]+) ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+r_func_logon_event = re.compile(line_start+func_logon_event)
+func_logon_event_ex=r'logon event\((?P<called>\d+)\): len:(?P<length>\d+) dc_ip:(?P<dc_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) time:(?P<dc_timestamp>\d+) len:\d+ data:(?P<wksta>[\w\d.-_]+)/(?P<domain>\w+)/(?P<user>[^\\ ]+) ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+r_func_logon_event_ex = re.compile(line_start+func_logon_event_ex)
+func_new_logon_0=r'(?P<function>new logon), +workstation:(?P<wksta>[^\\]+) +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+r_func_new_logon_0 = re.compile(line_start+func_new_logon_0)
+func_new_logon_1=r'(?P<function>new logon), +workstation:(?P<wksta>[^\\]+) +ip not changed +(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+r_func_new_logon_1 = re.compile(line_start+func_new_logon_1)
+func_ntlm_user=r'user:(?P<user>[^\\]+)'
+r_func_ntlm_user = re.compile(line_start+func_ntlm_user)
+func_ntlm_domain=r'domain:(?P<domain>[^\\]+)'
+r_func_ntlm_domain = re.compile(line_start+func_ntlm_domain)
+func_ntlm_wksta=r'workstation:(?P<wksta>[^\\]+)'
+r_func_ntlm_wksta = re.compile(line_start+func_ntlm_wksta)
+func_ntlm_seq=r'packet seq:(?P<ntlm_seq>\d+)'
+r_func_ntlm_seq = re.compile(line_start+func_ntlm_seq)
 
+func_cannot_resolve=r'cannot resolve workstation name:(?P<wksta>.*)'
+r_func_dns_cannot_resolve = re.compile(line_start+func_cannot_resolve)
 
+#DNS lookup: workstation name:NB-1110.schuledavos.net, dns server:(null), ip:00000000:00000000
+func_dns_query=r'DNS lookup: workstation name:(?P<wksta>[^,]+), dns server:\([^\)]+\), ip:[\w\d]+:[\w\d]+'
+r_func_dns_query = re.compile(line_start+func_dns_query)
 # Fortigate receive IO workers (FIXME)
 func_fortigate_io_recv=r'Bytes received from FortiGate: (?P<bytes>\d+)'
+r_func_fortigate_io_recv = re.compile(line_start+func_fortigate_io_recv)
+func_fortigate_io_ntlm_req=r'NTLM packet: add to queue, called:(?P<called>\d+), current:\d+'
+r_func_fortigate_io_ntlm_req = re.compile(line_start+func_fortigate_io_ntlm_req)
 
 # Fortigate send IO workers (FIXME)
 func_fortigate_io_send=r'get record from send queue: sock:(?P<fdr>[\da-fA-F]+):(?P<fdw>[\da-fA-F]+) buffer:(?P<ptr>[\da-fA-F]+) len:(?P<data_length>\d+) queue size:(?P<queue_length>\d+)'
+r_func_fortigate_io_send = re.compile(line_start+func_fortigate_io_send)
 
+func_fortigate_io_failed=r'server send thread for socket:(?P<socket>[\da-f]+) exit. FGT close connection'
+r_func_fortigate_io_failed = re.compile(line_start+func_fortigate_io_failed)
 # Fortigate messaging worker (FIXME)
 func_fortigate_msg_fgt_connected=r'(?P<count>[\d]+) FortiGates{0,1} connected'
+r_func_fortigate_msg_fgt_connected = re.compile(line_start+func_fortigate_msg_fgt_connected)
 func_fortigate_msg_cache_logon_send=r'check the cache to send logon events'
+r_func_fortigate_msg_cache_logon_send = re.compile(line_start+func_fortigate_msg_cache_logon_send)
 func_fortigate_msg_cache_logon_user=r'not in filter: last user:(?P<user1>[^ ]+) user:(?P<user2>[^ ]+)'
+r_func_fortigate_msg_cache_logon_user = re.compile(line_start+func_fortigate_msg_cache_logon_user)
 # group list unreliable, truncated at 900th character
 func_fortigate_msg_cache_logon_group=r'not in filter: last user:(?P<group1>[^ ]+) user:(?P<group2>[^ ]+)'
+r_func_fortigate_msg_cache_logon_group = re.compile(line_start+func_fortigate_msg_cache_logon_group)
 
 func_fortigate_msg_cache_logoff_purge=r'check the cache to purge logoff entries'
-func_fortigate_msg_cache_logoff_user=r'(?P<wksta>[\w._-]+):(?P<user>\w+)\[(?P<ip1>[\d.]+):(?P<ip2>[\d.]+)\] removed. current time:(?P<current_time>\d+) last update time:(?P<update_time>\d+) age:(?P<age>\d+)'
+r_func_fortigate_msg_cache_logoff_purge = re.compile(line_start+func_fortigate_msg_cache_logoff_purge)
+
+# not matching '.' in username
+# func_fortigate_msg_cache_logoff_user=r'(?P<wksta>[\w._-]+):(?P<user>\w+)\[(?P<ip1>[\d.]+):(?P<ip2>[\d.]+)\] removed. current time:(?P<current_time>\d+) last update time:(?P<update_time>\d+) age:(?P<age>\d+)'
+func_fortigate_msg_cache_logoff_user=r'(?P<wksta>[\w._-]+):(?P<user>[^\\]+)\[(?P<ip1>[\d.]+):(?P<ip2>[\d.]+)\] removed. current time:(?P<current_time>\d+) last update time:(?P<update_time>\d+) age:(?P<age>\d+)'
+r_func_fortigate_msg_cache_logoff_user = re.compile(line_start+func_fortigate_msg_cache_logoff_user)
 
 func_fortigate_msg_cache_user_saved=r'logon cache saved to file'
+r_func_fortigate_msg_cache_user_saved = re.compile(line_start+func_fortigate_msg_cache_user_saved)
 func_fortigate_msg_cache_group_saved=r'group cache \(\d+\) saved to file'
+r_func_fortigate_msg_cache_group_saved = re.compile(line_start+func_fortigate_msg_cache_group_saved)
 
 
 # DC Agent messaging worker
 func_dcagent_msg_received=r'Bytes received from DC agent\((?P<called>\d+)\): (?P<msg_bytes>\d+) dcagent IP: (?P<ip_hex>[\da-fA-F]+), MT=(?P<mt>\d+)'
+r_func_dcagent_msg_received = re.compile(line_start+func_dcagent_msg_received)
 
 # Group checking, while updating IP (done by different thread)
 func_update_groupcheck=r'check the entry to see if the user\'s group info changed' # yes, no info inside!
+r_func_update_groupcheck = re.compile(line_start+func_update_groupcheck)
 
 # Main thread which is accepting TCP sessions from Fortigates
 func_fortigate_io_accepted=r'accepting one FortiGate connection'
+r_func_fortigate_io_accepted = re.compile(line_start+func_fortigate_io_accepted)
 
+# Connection to FGT closed. return code:-1 last error:10053
+func_fortigate_io_closed=r'Connection to FGT closed. return code:(?P<return>[\d-]+) last error:(?P<errno>[\d-]+)'
+r_func_fortigate_io_closed = re.compile(line_start+func_fortigate_io_closed)
+# send hello
+func_fortigate_io_hello=r'send hello'
+r_func_fortigate_io_hello=re.compile(line_start+func_fortigate_io_hello)
+
+# server_send thread for sock:3696
+func_fortigate_io_send_sock=r'server_send thread for sock:(?P<socket>[\d\a-f]+)'
+r_func_fortigate_io_send_sock=re.compile(line_start+func_fortigate_io_send_sock)
 # poller thread (FIXME)
 # ... this time it's being ignored
 # func_poller_debug_dcpoller=r'\[D\]\[DCPoller\].*'
@@ -96,33 +163,53 @@ func_fortigate_io_accepted=r'accepting one FortiGate connection'
 
 #[I][LSPoller]DoPolling(ip=2900510A, host=PC_D01/d3s011.lpti.le.grp): r=42
 func_poller_dopoll_end=r'\[I\]\[LSPoller\]DoPolling\(ip=(?P<ip>[\d\w]+), host=(?P<fqdn>[\w\d./]+)\): r=(?P<r>\d+)'
+r_func_poller_dopoll_end = re.compile(line_start+func_poller_dopoll_end)
 
 #[I][LSPoller]DoPolling(ip=2900510A, host=PC_D01/d3s011.lpti.le.grp)-->
 func_poller_dopoll_begin=r'\[I\]\[LSPoller\]DoPolling\(ip=(?P<ip>[\d\w]+), host=(?P<fqdn>[\w\d./]+)\)-->'
+r_func_poller_dopoll_begin = re.compile(line_start+func_poller_dopoll_begin)
 
 #[I][DCPoller]NSEnum(d5s08.lpp.le.grp): r=0, e=997, R=148, T=148, H=0x00095E46
 func_poller_nsenum=r'\[I\]\[DCPoller\]NSEnum\(([\w\d.]+)\): r=\d+, e=\d+, R=\d+, T=\d+, H=0x[\da-fA-F]+'
+r_func_poller_nsenum = re.compile(line_start+func_poller_nsenum)
 
 #[D][DCPoller]SESI10: w=10.81.8.123, u=TPT567
 func_poller_entry=r'\[D]\[DCPoller\]([\w\d]+): w=(?P<wksta>[\d\w.]+), u=(?P<user>[\w\d]+)'
+r_func_poller_entry = re.compile(line_start+func_poller_entry)
 
 #[I][LSPoller]PackMsg(w=10.81.8.124, u=TPT845, d=PC_D01, ip=2800510A, time=1357794964)
 func_poller_login=r'\[I]\[LSPoller\]PackMsg\(w=(?P<wksta>[\d\w.]+), u=(?P<user>[\w\d]+), d=(?P<domain>[\d\w.]+), ip=(?P<dc_ip>[\dA-F.]+), time=(?P<tstamp>[\d]+)\)'
+r_func_poller_login = re.compile(line_start+func_poller_login)
+
+
+func_hb_send=r'send heart beat, sock:(?P<socket>[\da-f]+) len:\d+ SN:(?P<fgtsn>[\w\d]+)'
+r_func_hb_send = re.compile(line_start+func_hb_send)
+
+func_hb_0Fortigate=r'0 FortiGate connected'
+r_func_hb_0Fortigate = re.compile(line_start+func_hb_0Fortigate)
+
 """
  GLOBAL LOGGING SETUP
 """
 logger_state = logging.getLogger("state")
 logger_analyzer = logging.getLogger("analyzer")
+logger_plain = logging.getLogger("plain")
 
 ch = logging.StreamHandler()
 formatter = logging.Formatter('[%(levelname)s][%(name)s] %(message)s')
 ch.setFormatter(formatter)
+
+chh = logging.StreamHandler()
+formatter_chh = logging.Formatter('%(message)s')
+chh.setFormatter(formatter_chh)
 
 logger_state.addHandler(ch)
 logger_state.setLevel(logging.DEBUG)
 logger_analyzer.addHandler(ch)
 logger_analyzer.setLevel(logging.DEBUG)
 
+logger_plain.addHandler(chh)
+logger_plain.setLevel(logging.INFO)
     
 """
  Worker: class representing single worker thread on Collector agent. 
@@ -144,6 +231,8 @@ class Worker:
     ROLE_DCAGENTIORECV='dcagent-io-recv'
     ROLE_UPDATERGROUP='updater-groupcheck'
     ROLE_DOPOLL='poller'
+
+    ROLE_FGTHB='fortigate-hbeat'
 
     def __init__(self,pid,workerset):
         self.pid = pid
@@ -182,27 +271,40 @@ class Worker:
         # ... and func_process_dcagent_events does not have much informational value anyway
         
         #self.new_state_events[line_start+func_process_dcagent_events] = Worker.ROLE_LOGONS
-        self.new_state_events[line_start+func_dcadgent_remove_q] = Worker.ROLE_LOGONS
-        self.new_state_events[line_start+func_ntlm_remove_q] = Worker.ROLE_LOGONS
-        self.new_state_events[line_start+func_update_entry_ip] = Worker.ROLE_UPDATERIP
-        self.new_state_events[line_start+func_update_entry_workstation] = Worker.ROLE_UPDATERWKS
-        self.new_state_events[line_start+func_fortigate_io_recv] = Worker.ROLE_FGTIORECV
-        self.new_state_events[line_start+func_fortigate_io_send] = Worker.ROLE_FGTIOSEND
-        # removed on 0.1.1a -- seems to be right decision
-        #self.new_state_events[line_start+func_fortigate_msg_fgt_connected] = Worker.ROLE_FGTMSG
-        self.new_state_events[line_start+func_fortigate_msg_cache_logon_send] = Worker.ROLE_FGTMSG
-        self.new_state_events[line_start+func_fortigate_msg_cache_logoff_purge] = Worker.ROLE_FGTMSG
-        self.new_state_events[line_start+func_fortigate_msg_cache_user_saved] = Worker.ROLE_FGTMSG
-        self.new_state_events[line_start+func_fortigate_msg_cache_group_saved] = Worker.ROLE_FGTMSG
+        self.new_state_events[r_func_dcadgent_remove_q] = Worker.ROLE_LOGONS
+        self.new_state_events[r_func_ntlm_remove_q] = Worker.ROLE_LOGONS
+        self.new_state_events[r_func_update_entry_ip] = Worker.ROLE_UPDATERIP
+        self.new_state_events[r_func_update_entry_workstation] = Worker.ROLE_UPDATERWKS
         
-        self.new_state_events[line_start+func_dcagent_msg_received] = Worker.ROLE_DCAGENTIORECV
-        self.new_state_events[line_start+func_update_groupcheck] = Worker.ROLE_UPDATERGROUP
-        self.new_state_events[line_start+func_fortigate_io_accepted] = Worker.ROLE_FGTIOMUX
-        self.new_state_events[line_start+func_poller_dopoll_begin] = Worker.ROLE_DOPOLL
+        self.new_state_events[r_func_fortigate_io_recv] = Worker.ROLE_FGTIORECV
+        self.new_state_events[r_func_fortigate_io_send] = Worker.ROLE_FGTIOSEND
+        self.new_state_events[r_func_fortigate_io_failed] = Worker.ROLE_FGTIOSEND
+        self.new_state_events[r_func_fortigate_io_hello] = Worker.ROLE_FGTIORECV
+        self.new_state_events[r_func_fortigate_io_closed] = Worker.ROLE_FGTIORECV
+        self.new_state_events[r_func_fortigate_io_send_sock] = Worker.ROLE_FGTIOSEND
+        
+        # removed on 0.1.1a -- seems to be right decision
+        #self.new_state_events[r_+func_fortigate_msg_fgt_connected] = Worker.ROLE_FGTMSG
+        self.new_state_events[r_func_fortigate_msg_cache_logon_send] = Worker.ROLE_FGTMSG
+        self.new_state_events[r_func_fortigate_msg_cache_logoff_purge] = Worker.ROLE_FGTMSG
+        self.new_state_events[r_func_fortigate_msg_cache_user_saved] = Worker.ROLE_FGTMSG
+        self.new_state_events[r_func_fortigate_msg_cache_group_saved] = Worker.ROLE_FGTMSG
+        
+        self.new_state_events[r_func_dcagent_msg_received] = Worker.ROLE_DCAGENTIORECV
+        self.new_state_events[r_func_update_groupcheck] = Worker.ROLE_UPDATERGROUP
+        self.new_state_events[r_func_fortigate_io_accepted] = Worker.ROLE_FGTIOMUX
+        self.new_state_events[r_func_poller_dopoll_begin] = Worker.ROLE_DOPOLL
 
         # ignored lines, which are duplicating info, or just unecessarily screw up parsing :)
         #self.new_state_events[line_start+func_poller_debug_dcpoller] = Worker.ROLE_IGNORED
-        #self.new_state_events[line_start+func_process_dcagent_events] = Worker.ROLE_IGNORED
+        
+        # let's ignore calling worker line. It may be a start of several worker tasks
+        self.new_state_events[r_func_process_dcagent_events] = Worker.ROLE_IGNORED
+        self.new_state_events[r_func_ntlm_begin] = Worker.ROLE_IGNORED
+        
+        self.new_state_events[r_func_hb_send] = Worker.ROLE_FGTHB
+        self.new_state_events[r_func_hb_0Fortigate] = Worker.ROLE_FGTHB
+        
         
     def data(self):
         return [ "Worker", { "pid": self.pid }, { "roles" : self.roles }, { "roles_counter": self.roles_counter }, { "task_list" : self.task_list } ]
@@ -248,24 +350,29 @@ class Worker:
         if re.search('\[[DL][CS]Poller\]',line) and self.child_poller:
             self.update_poller(line)
             return None
-
-        self.log.append(line.strip())    
-        current_index = len(self.log)-1
-        #logger_state.debug(" ... current index:" + str(current_index))
-        
+     
         m = None
         m_r = Worker.ROLE_UNKNOWN
         
         for n in self.new_state_events:
-            m = re.match(n,line) 
+            #m = re.match(n,line) 
+            m = n.match(line) 
             if m:
                 # set match role according new_state_event dictionary
                 m_r = self.new_state_events[n]
                 
                 logger_state.debug("Worker "+ self.pid + ": new state: " + m_r + " : " + line)
                 if m_r == Worker.ROLE_IGNORED:
+                    logger_state.debug('Ignoring: %s' % (line,))
                     return None
                 break
+
+        # was originally before the for loop. But we don't want to include IGNORED lines
+        # in the task list
+        
+        self.log.append(line.strip())    
+        current_index = len(self.log)-1
+        #logger_state.debug(" ... current index:" + str(current_index))            
             
         if m:
             # log state stop and let finish it
@@ -338,6 +445,8 @@ class Workers:
         self.task_db = {}
         self.task_db_list = []
     
+        self.chsearch_suffix = None
+        self.output_stdout = False
     
     def data(self):
         r_sup = ["WORKERS", { "task_chain": self.task_chain }, { "task_db_list":self.task_db_list }, { "task_db":self.task_db } ] 
@@ -413,6 +522,9 @@ class Workers:
 
     def search_chain(self,chsearch):
         r = self.analyzer.search_chain(chsearch)
+        suf = self.chsearch_suffix
+        if not suf:
+            suf = "CHAIN"
 
         #pprint(r)
 
@@ -427,7 +539,7 @@ class Workers:
                 for ch_n in i.keys():
                     norm["%s : %s[%d]" % (ch,ch_n,j)] = r[ch][j][ch_n]
 
-        f = open_file(self.ca_log,"CHAIN")
+        f = open_file(self.ca_log,suf)
         if f:
             nl = self.write_tasks(f,norm)
             f.close()
@@ -466,17 +578,20 @@ class Workers:
     def proc_line(self,line_raw):
 
         line = line_raw.strip()
-        m = re.match(line_start,line)
+        m = r_line_start.match(line)
         
         if m:
-            #logger_state.info("processing: " + line)
+            #p = m.group('pid')
+            #if p == 688:
+            #    logger_state.info("processing<%s>: " % (p,) + line)
+                
             return self._update_worker(m.group('pid'),line)
             
         else:
             if not line:
                 logger_state.debug("ignoring blank line")
             else:
-                logger_state.debug("ignoring non-conforming line: '%s'" % (line,))
+                logger_state.warning("ignoring non-conforming line: '%s'" % (line,))
         
         return None
     
@@ -491,10 +606,23 @@ class Workers:
         lines_written = 0
         
         if not task_lists: 
-            logger_state.info('write_task: dumping whole database')
-            ts = {"database dump": self.task_db_list}
+            #logger_state.info('write_task: dumping whole database')
+            #ts = {"database dump": self.task_db_list}
+            
+            logger_state.info('write_task: no data to be written')
+            return 0
+        
+        dot_counter = time.time()
+        
+            
         
         for ts_l in ts.keys():
+
+            if time.time() - dot_counter > 10 and not self.output_stdout:
+                logger_state.info('%d lines written ...' % (lines_written,))
+                dot_counter = time.time()
+
+            
             if prefix_lists:
                 l_w = "0-0 %s\n" % (ts_l,)
                 l_w += "0-0 >>>\n"
@@ -512,7 +640,20 @@ class Workers:
 
                         logger_state.debug("write_task: line to write: '%s'" % (l_w,))
                         f.write(l_w)
+
+                        # likely in interactive mode
+                        if self.output_stdout:
+                            logger_plain.info(l_w);
+                            
                         lines_written += 1
+                    
+                    if "anno" in self.task_db[t_id].keys():
+                        for a in self.task_db[t_id]["anno"]:
+                            l_w = Analyzer.annotate_format(a) + '\n'
+
+                            logger_state.debug("write_task: annotation line to write: '%s'" % (l_w,))
+                            f.write(l_w)
+                            
                     if prefix_lines:
                         f.write("\n\n")
                         
@@ -522,6 +663,15 @@ class Workers:
 class Analyzer:
     
     DEBUG_MATCH = 0
+    anno_messages = {}
+    anno_messages["called_delay"] = "Called request took too long to process"
+    anno_messages["called_recv_queue_start"] = "All workers are now busy, starting to queue"
+    anno_messages["called_recv_queue_stop"] = "Workers busy state ceased"
+    anno_messages["ntlm_big_delay"] = "NTLM request took too long to process"
+    anno_messages["ntlm_no_type3"] = "No TYPE3 has been received from Fortigate or browser"
+    anno_messages["ntlm_type1_cxfail"] = "NTLM TYPE2 negotiation failed"
+    anno_messages["ntlm_type3_cxfail"] = "NTLM TYPE3 validation failed"
+
     
     def __init__(self,workers):
         self.workers = workers
@@ -537,12 +687,86 @@ class Analyzer:
         # chains of gid's by their purpose
         self.chain = {}
         # key points to a list of GIDs, as they appeared in the log, relevant to 'called' ID -- this is logon event id number assigned by receiving thread worker
-        # example: self.chain['called']['44432-1'] = [... list of relevant task gids ...]
+        # example: self.chain['called']['444322'] = [... list of relevant task gids ... in case of called list will contain e.g. 12312-0-2344, 8902-0-6720 ]
+        
+        # annotation database, will be filled task_id's 
+        # First phase: list by severity
+        # contains always list of task_id's 
+        self.anno_db = {}
+        self.anno_db["severity"] = {}
+        self.anno_db["severity"]["ERROR"] = []
+        self.anno_db["severity"]["WARNING"] = []
+        self.anno_db["severity"]["INFO"] = []
+        
+        # allow some sort of intermediate result cache
+        self.temp = {}
+
+        self.r_workers_busy_test = re.compile(line_start+r'(?P<type>[\w]+) packet: add to queue, called:\d+, current:(?P<count>[\d]+)')
         
         # non-virtual (real) keys present in the regex groups. You can add virtual ones later by mapping
-        self.chain_keys = ['called','ip1','ip2','wksta','domain','user','dc_ip'] 
+        self.chain_keys = ['called','ip1','ip2','wksta','domain','user','dc_ip','ntlm_seq'] 
         for _k in self.chain_keys:
             self.chain[_k] = {}
+
+        self.debug_zoom = {}
+        self.debug_zoom['called'] = []
+        self.debug_zoom['ntlm_seq'] = []
+    
+    
+    """
+        Annotations concept
+        task structure will be equipped with the key "anno" which will be a *list*
+        of structures:
+        {
+          "severity": string: [ INFO,WARNING,ERROR ]
+          "start": int: index of line where the problem was detected, 0 means it belongs to whole task
+          "stop":  int: index of last line relevant to the annotation, 0 means anno relates to start line only
+          "message": string: key to global message index, if value is not found, key is written as annotation 
+          "details": string: detailed information which cannot be prepared before
+          "origin": string
+        }
+        
+        Annotations are written to file under the task log, prefixed with comment string '# ' in form:
+        #34534-0-123; ERROR; Lines 23,0; DNS resolution failed in logon; workstation XYZ with user ABC was not logged in
+    """
+    
+    @staticmethod
+    def annotate_format(anno_dict):
+        return ("#%s -- %s; %s; %s,%s; %s; %s" % (
+                str(anno_dict["origin"]),
+                str(anno_dict["module"]),
+                str(anno_dict["severity"]),
+                str(anno_dict["start"]),
+                str(anno_dict["stop"]),
+                str(anno_dict["message"]),
+                str(anno_dict["details"])
+                ))
+                
+    def annotate(self,task_id,module,severity,msg_key,l1=0,l2=0,details=None):
+        if "anno" not in self.workers.task_db[task_id].keys():
+            self.workers.task_db[task_id]["anno"] = []
+
+        a1 = {}
+        a1["module"] = module
+        a1["severity"] = severity
+        a1["start"] = l1
+        a1["stop"] = l2
+
+        try:
+            a1["message"] = self.anno_messages[msg_key]
+        except KeyError, e:
+            a1["message"] = msg_key
+        if details:
+            a1["details"] = details
+        else:
+            a1["details"] = "N/A"
+        
+        a1["origin"] = task_id
+        
+        self.workers.task_db[task_id]["anno"].append(a1)
+        self.anno_db["severity"][severity].append(a1['origin'])
+        
+        logger_analyzer.debug("[anno] annotating task %s: %s" % (task_id,Analyzer.annotate_format(a1)))
     
     @staticmethod
     def debug_lines(func_name, dict_to_print):
@@ -644,10 +868,10 @@ class Analyzer:
 
                     if m:
                         if strategy=='ALL':
-                            logger_analyzer.info("[D] partial match: ('%s' matches '%s' expression '%s')" % (k,typ,ex))
+                            logger_analyzer.debug("partial match: ('%s' matches '%s' expression '%s')" % (k,typ,ex))
                         else:
                             # strategy=="ANY"
-                            logger_analyzer.info("[D] sufficient match: ('%s' matches '%s' expression '%s')" % (k,typ,ex))
+                            logger_analyzer.debug("sufficient match: ('%s' matches '%s' expression '%s')" % (k,typ,ex))
                             matches_this_criteria = True
                             break
                     else:
@@ -656,7 +880,7 @@ class Analyzer:
 
                 if matches_this_criteria and cur:
                     # all of the same criteria key matched
-                    logger_analyzer.info("[D] complete match: %s" % (cur,))
+                    logger_analyzer.info("successful match: %s" % (cur,))
                     matches = Analyzer.stack_dict(matches, { c:{ cur: self.chain[c][cur] }})
 
         Analyzer.debug_lines("search_chain[result]",matches)
@@ -762,10 +986,20 @@ class Analyzer:
         Crossroad function which is utilized to let analyze the task, according to
         it's role
         """
+        
+        # enrich task_data with analyzer entry
+        task_data['an'] = {}
+        
         if task_data['role']==Worker.ROLE_DCAGENTIORECV:
             logger_analyzer.debug('analyzing msg from dcagent: taskid=%s' % (task_data['id'],))
             result = self.analyze_dcagent_msg(task_data)
             self.update_chain(result)
+        
+        elif task_data['role']==Worker.ROLE_FGTIORECV:
+            logger_analyzer.debug('analyzing msg from fortigate: taskid=%s' % (task_data['id'],))
+            result = self.analyze_fortigate_io_msg(task_data)
+            self.update_chain(result)
+            
     
         elif task_data['role']==Worker.ROLE_LOGONS:
             logger_analyzer.debug('Starting to analyze logon task')
@@ -796,7 +1030,7 @@ class Analyzer:
         result['gid'] = gid
     
         for l in task_data['log']:
-            m = re.match(line_start+func_poller_login,l)
+            m = r_func_poller_login.match(l)
             if m:
                 logger_analyzer.debug("analyze_poller: matched func_poller_login")
                 r = m.groupdict()
@@ -822,19 +1056,46 @@ class Analyzer:
         result['gid'] = gid
     
         for l in task_data['log']:
-            m = re.match(line_start+func_dcagent_msg_received,l)
+            m = r_func_dcagent_msg_received.match(l)
             if m:
                 c = m.group('called')
                 logger_analyzer.debug("analyze_dcagent_msg: matched msg_received")
-                if c in self.chain['called'].keys():
-                    logger_analyzer.debug('analyze_dcagent_msg: called ID %s alrady processed! Skipping.' % (c,))
-                    continue
-                
+                #if c in self.chain['called'].keys():
+                #    logger_analyzer.debug('analyze_dcagent_msg: called ID %s alrady processed! Skipping.' % (c,))
+                #    continue
+                #
                 #result['called'] = c
                 result = Analyzer.stack_dict(result,{'called':c})
 
+                # add 'called' into analyzer stack 
+                if ('called' in m.groupdict().keys()):
+                    task_data['an']['called'] = m.groupdict()['called']
+
+
         return result
+    
+    def analyze_fortigate_io_msg(self,task_data):
+        gid = task_data['gid']
+        result = {}
+        result['gid'] = gid
+    
+        for l in task_data['log']:
+           
+            m = r_func_fortigate_io_ntlm_req.match(l)
+            if m:
+                 # update the result dict by the match
+                logger_analyzer.debug("analyze_fortigate_msg: func_fortigate_io_ntlm_req: %s" % (l,))
+                #result.update(m.groupdict())
+                result = Analyzer.stack_dict(result,m.groupdict())
                 
+                # add 'called' into analyzer stack 
+                if ('called' in m.groupdict().keys()):
+                    task_data['an']['called'] = m.groupdict()['called']
+                
+                continue   
+                
+        return result
+        
         
     def analyze_logons(self,task_data):
         """
@@ -849,39 +1110,55 @@ class Analyzer:
         
         for l in task_data['log']:      
                   
-            # match the very first meaningfull log line
+            # match the very first meaningful log line
             # e.g.
             # dcagent packet: removed from queue, called:1428633 remain:0
-            m = re.match(line_start+func_dcadgent_remove_q,l)
+            m = r_func_dcadgent_remove_q.match(l)
             if m:
                 c = m.group('called')
+                
+                # add 'called' into analyzer stack 
+                if ('called' in m.groupdict().keys()):
+                    task_data['an']['called'] = m.groupdict()['called']
+                    logger_analyzer.debug("analyze_logons: r_func_dcadgent_remove_q: [called]: %s" % (task_data['an']['called'],))
+
+          
                 if c not in self.chain['called'].keys():
                     logger_analyzer.debug("analyze_logons: called ID '%s' not found! Skipping." % (c,))
                     # FIXME: this could be handled more elegant way: the logon event which cannot be paired 
                     # will be marked as <incomplete>
                     continue
+      
                 if 'called' not in result: result = Analyzer.stack_dict( result, {'called':c})
                 continue
 
             
-            m = re.match(line_start+func_ntlm_remove_q,l)
+            m = r_func_ntlm_remove_q.match(l)
             if m:
                 
                 LOGON_NTLM = True
                 
                 c = m.group('called')
+                
+                # add 'called' into analyzer stack 
+                if ('called' in m.groupdict().keys()):
+                    task_data['an']['called'] = m.groupdict()['called']
+                    logger_analyzer.debug("analyze_logons: : r_func_ntlm_remove_q: [called]: %s" % (task_data['an']['called'],))
+                
+                
                 if c not in self.chain['called'].keys():
                     logger_analyzer.debug("analyze_logons: called ID '%s' not found! Skipping." % (c,))
                     # FIXME: this could be handled more elegant way: the logon event which cannot be paired 
                     # will be marked as <incomplete>
                     continue
+                
                 if 'called' not in result: result = Analyzer.stack_dict( result, {'called':c})
                 continue                
                 
             # match logon event with extra IP -- MATCH BEFORE without extra
             # logon event(1428633): len:49 dc_ip:10.81.0.41 time:1359606186 len:32 
             #        data:NB0036.lpti.le.grp/PC_D01/TPT090 ip:10.81.12.110:10.81.3.163
-            m = re.match(line_start+func_logon_event_ex,l)
+            m = r_func_logon_event_ex.match(l)
             if m:
                 logger_analyzer.debug("analyze_logons: func_logon_event_1 [extra ip]: %s" % (l,))
                 #result.update(m.groupdict())
@@ -893,7 +1170,7 @@ class Analyzer:
             # e.g.
             # logon event(1428635): len:43 dc_ip:10.81.0.41 time:1359606186 len:31 
             #        data:T1288.lpti.le.grp/PC_D01/TPT009 ip:10.81.10.67
-            m = re.match(line_start+func_logon_event,l)
+            m = r_func_logon_event.match(l)
             if m:
                 # update the result dict by the match
                 logger_analyzer.debug("analyze_logons: func_logon_event: %s" % (l,))
@@ -902,7 +1179,7 @@ class Analyzer:
                 continue
            
             # 
-            m = re.match(line_start+func_new_logon_0,l)
+            m = r_func_new_logon_0.match(l)
             if m:
                 # update the result dict by the match
                 logger_analyzer.debug("analyze_logons: func_new_logon_0: %s" % (l,))
@@ -910,41 +1187,64 @@ class Analyzer:
                 result = Analyzer.stack_dict(result,m.groupdict())
                 continue     
                 
-            m = re.match(line_start+func_new_logon_1,l)
+            m = r_func_new_logon_1.match(l)
             if m:
                 # update the result dict by the match
                 logger_analyzer.debug("analyze_logons: func_new_logon_1: %s" % (l,))
                 #result.update(m.groupdict())
                 result = Analyzer.stack_dict(result,m.groupdict())
                 continue         
-                
+            
+            m = r_func_dns_query.match(l)
+            if m:
+                # update the result dict by the match
+                logger_analyzer.debug("analyze_logons: func_dns_query: %s" % (l,))
+                #result.update(m.groupdict())
+                result = Analyzer.stack_dict(result,m.groupdict())
+                continue         
+            
+            m = r_func_dns_cannot_resolve.match(l)
+            if m:
+                # update the result dict by the match
+                logger_analyzer.debug("analyze_logons: func_dns_cannot_resolve: %s" % (l,))
+                #result.update(m.groupdict())
+                result = Analyzer.stack_dict(result,m.groupdict())
+                continue         
+            
 
             # ANALYZE NTLM LOGON EVENT
             if LOGON_NTLM:
-                m = re.match(line_start+func_ntlm_user,l)    
+                m = r_func_ntlm_user.match(l)    
                 if m:
                     # update the result dict by the match
-                    logger_analyzer.debug("analyze_logons: func_nlm_user: %s" % (l,))
+                    logger_analyzer.debug("analyze_logons: func_ntlm_user: %s" % (l,))
                     #result.update(m.groupdict())
                     result = Analyzer.stack_dict(result,m.groupdict())
                     continue         
 
-                m = re.match(line_start+func_ntlm_wksta,l)    
+                m = r_func_ntlm_wksta.match(l)    
                 if m:
                     # update the result dict by the match
-                    logger_analyzer.debug("analyze_logons: func_nlm_wksta: %s" % (l,))
+                    logger_analyzer.debug("analyze_logons: func_ntlm_wksta: %s" % (l,))
                     #result.update(m.groupdict())
                     result = Analyzer.stack_dict(result,m.groupdict())
                     continue         
 
-                m = re.match(line_start+func_ntlm_domain,l)    
+                m = r_func_ntlm_domain.match(l)    
                 if m:
                     # update the result dict by the match
-                    logger_analyzer.debug("analyze_logons: func_nlm_domain: %s" % (l,))
+                    logger_analyzer.debug("analyze_logons: func_ntlm_domain: %s" % (l,))
                     #result.update(m.groupdict())
                     result = Analyzer.stack_dict(result,m.groupdict())
                     continue         
-
+                m = r_func_ntlm_seq.match(l)
+                if m:
+                    # update the result dict by the match
+                    logger_analyzer.debug("analyze_logons: func_ntlm_seq: %s" % (l,))
+                    #result.update(m.groupdict())
+                    result = Analyzer.stack_dict(result,m.groupdict())
+                    continue         
+                
                 
                 
         #pprint(result)
@@ -958,14 +1258,14 @@ class Analyzer:
         result['gid'] = gid
         
         for l in task_data['log']:
-            m = re.match(line_start+func_update_entry_workstation, l)
+            m = r_func_update_entry_workstation.match(l)
             if m:
                 logger_analyzer.debug("analyze_wksta_check: func_update_entry_workstation: %s" % (l,))
                 #result.update(m.groupdict())
                 result = Analyzer.stack_dict(result,m.groupdict())
                 continue
             
-            m = re.match(line_start+func_wksta_verify_ip, l)
+            m = r_func_wksta_verify_ip.match(l)
             if m:
                 logger_analyzer.debug("analyze_wksta_check: func_wksta_verify_ip: %s" % (l,))
                 #result.update(m.groupdict())
@@ -973,7 +1273,7 @@ class Analyzer:
                 continue
          
             # important thing is revealed: SID
-            m = re.match(line_start+func_wksta_test, l)
+            m = r_func_wksta_test.match(l)
             if m:
                 logger_analyzer.debug("analyze_wksta_check: func_wksta_test: %s" % (l,))
                 #result.update(m.groupdict())
@@ -993,17 +1293,17 @@ class Analyzer:
         line = -1
         for l in task_data['log']:
             line += 1
-            m = re.match(line_start+func_fortigate_msg_cache_logon_send, l)
+            m = r_func_fortigate_msg_cache_logon_send.match(l)
             if m:
                 logger_analyzer.debug("analyze_fortigate_msg: func_fortigate_msg_cache_logon_send: %s" % (l,))
                 continue
                 
-            m = re.match(line_start+func_fortigate_msg_cache_logoff_purge, l)
+            m = r_func_fortigate_msg_cache_logoff_purge.match(l)
             if m:
                 logger_analyzer.debug("analyze_fortigate_msg: func_fortigate_msg_cache_logoff_purge: %s" % (l,))
                 continue
             
-            m = re.match(line_start+func_fortigate_msg_cache_logon_user, l)
+            m = r_func_fortigate_msg_cache_logon_user.match(l)
             if m:
                 logger_analyzer.debug("analyze_fortigate_msg: func_fortigate_msg_cache_logon_user: %s" % (l,))
                 user1 = m.group('user1')
@@ -1013,7 +1313,7 @@ class Analyzer:
                 result = Analyzer.stack_dict(result,{'user': [user1,user2]})
                 continue
                 
-            m = re.match(line_start+func_fortigate_msg_cache_logoff_user, l)
+            m = r_func_fortigate_msg_cache_logoff_user.match(l)
             if m:
                 logger_analyzer.debug("analyze_fortigate_msg: func_fortigate_msg_cache_logoff_user: %s" % (l,))
                 
@@ -1033,7 +1333,7 @@ class Analyzer:
         result['gid'] = gid
         
         for l in task_data['log']:
-            m = re.match(line_start+func_update_entry_ip, l)
+            m = r_func_update_entry_ip.match(l)
             if m:
                 logger_analyzer.debug("analyze_ip_check: func_update_entry_ip: %s" % (l,))
                 result = Analyzer.stack_dict(result,m.groupdict())
@@ -1093,7 +1393,12 @@ class Analyzer:
 
                     # update the chain with task GID -- this GID contains reference to the keyword!
                     self.chain[ch][c_i].append(result_struct['gid'])
-                
+                    
+                    # init chained in task_data
+                    if 'chains' not in self.workers.task_db[result_struct['gid']].keys():
+                        self.workers.task_db[result_struct['gid']]['values'] = {}
+                    Analyzer.stack_dict(self.workers.task_db[result_struct['gid']]['values'],result_struct)
+                    
                 
                 # virtual map processing!
                 
@@ -1115,6 +1420,13 @@ class Analyzer:
                                 continue
 
                         self.chain[virtual_map[ch]][c_i].append(result_struct['gid'])
+
+                        # init chained in task_data
+                        if 'chains' not in self.workers.task_db[result_struct['gid']].keys():
+                            self.workers.task_db[result_struct['gid']]['values'] = {}
+
+                        # now we have results also in task_data
+                        Analyzer.stack_dict(self.workers.task_db[result_struct['gid']]['values'],result_struct)                        
                     
             else:
                 logger_analyzer.debug("regex group '%s' not present in the task '%s'" 
@@ -1208,9 +1520,13 @@ class Analyzer:
     def line_timedelta(l1,l2):
         m1 = re.search("^"+line_start,l1)
         m2 = re.search("^"+line_start,l2)
+
+        logger_analyzer.debug("line_timedelta: t1=%s" % (pformat(m1.group('timestamp')),))
+        logger_analyzer.debug("line_timedelta: t2=%s" % (pformat(m2.group('timestamp')),))
         
         if m1 and m2:
             delta = Analyzer.strptime(m2.group('timestamp')) -  Analyzer.strptime(m1.group('timestamp'))
+            logger_analyzer.debug("delta=%.2f" % (delta.total_seconds(),))
             
             # DEP: 2.7
             return delta.total_seconds()
@@ -1220,7 +1536,28 @@ class Analyzer:
     
     @staticmethod
     def task_delay(t1, t2):
-        return Analyzer.line_timedelta(t1['log'][-1],t2['log'][0])
+        #return Analyzer.line_timedelta(t1['log'][-1],t2['log'][0])
+        return Analyzer.line_timedelta(t1['log'][0],t2['log'][-1])
+
+    @staticmethod
+    def task_begin(t):
+        l = t['log'][0]
+        m = re.search("^"+line_start,l)
+        
+        if m:
+            return m.group('timestamp')
+        
+        return None
+
+    @staticmethod
+    def task_end(t):
+        l = t['log'][-1]
+        m = re.search("^"+line_start,l)
+        
+        if m:
+            return m.group('timestamp')
+        
+        return None
 
     @staticmethod    
     def hexip_to_str(t):
@@ -1242,32 +1579,250 @@ class Analyzer:
         
         return r
         
-    def analyze_called(self):
-        logger_analyzer.debug("[ANAL]... processing 'called' chain: start")
+    def analyze_chain_called(self):
+        logger_analyzer.debug("[called]... processing 'called' chain: start")
         
-        for c in self.chain['called']:
-            logger_analyzer.debug("[ANAL]... processing 'called' ID: %s" % (c,))
+        # operate on sorted list to have it in order
+        for c in sorted(self.chain['called']):
+            logger_analyzer.debug("[called]... processing 'called' ID: %s" % (c,))
 
-            # FIXME: testing ... just length of 2 is processed, others silently ignored
-            if len(self.chain['called'][c]) == 2:
+            if len(self.chain['called'][c]) >= 1:
                 t1 = self.chain['called'][c][0]
-                t2 = self.chain['called'][c][1]
-                d =  Analyzer.task_delay(self.workers.task_db[t1],self.workers.task_db[t2])
+                self.analyze_chain_called_queue(t1)
+                
+            # FIXME: testing ... just length of 2 is processed, others silently ignored
+            if len(self.chain['called'][c]) >= 2:
+                t1 = self.chain['called'][c][0]
+                t2 = self.chain['called'][c][-1]
+                
+                if c in self.debug_zoom['called']:
+                    logger_analyzer.info("Task: %s" % (t1,))
+                    for l in self.workers.task_db[t1]['log']:
+                        logger_analyzer.info(l)
+                    logger_analyzer.info("Task: %s" % (t2,))
+                    for l in self.workers.task_db[t2]['log']:
+                        logger_analyzer.info(l)
+
+                
+                # sometimes it happen that in the chain the first task will finish later
+                # than the others. It can give negative results. Abs it.
+                
+                d =  abs(Analyzer.task_delay(self.workers.task_db[t1],self.workers.task_db[t2]))
                 
                 # FIXME: those messages should be set to approriate level!!!
                 #        ... but also on appropriate place, stdout it's not appropriate place
-                if d > 120:
-                    logger_analyzer.debug("[ANAL]... huge delay in processing %s = %f" % (c,d))
-                if d > 60:
-                    logger_analyzer.debug("[ANAL]... big delay in processing %s = %f" % (c,d))
-                elif d > 30:
-                    logger_analyzer.debug("[ANAL]... noticeworthy delay in processing %s = %f" % (c,d))
                 
-                logger_analyzer.debug("[ANAL]... delay in processing %s = %f" % (c,d))
-                
+                if d > 5:
+                    logger_analyzer.debug("[called] Called ID %s: delayed = %.2f" % (c,d))
+                    det="Processing took %.0f seconds (related tasks %s,%s)" % (d,t1,t2)
+                    self.annotate(t1,"CALLED","WARNING","called_delay",details=det)
+                    self.annotate(t2,"CALLED","WARNING","called_delay",details=det)
+              
+            
         
-        logger_analyzer.debug("[ANAL]... processing 'called' chain: done")
+        logger_analyzer.debug("[called]... processing 'called' chain: done")
+
+    def analyze_chain_called_queue(self,tid):
+        
+        for l in self.workers.task_db[tid]['log']:
+            m = self.r_workers_busy_test.match(l)
+
+            if m:
+                # count = current possition in the queue 
+                count = m.groupdict()['count']
                 
+                # init cache if necessary
+                if "called_recv_queue" not in self.temp.keys():
+                    self.temp['called_recv_queue'] = 0
+                
+                if int(count) > 0 and self.temp['called_recv_queue'] == 0:
+                    self.temp['called_recv_queue'] = int(count)
+                    self.temp['called_recv_queue_tid'] = tid
+
+                elif int(count) == 0 and self.temp['called_recv_queue'] > 0:
+                    self.temp['called_recv_queue'] = int(count)
+                    start_tid = self.temp['called_recv_queue_tid']
+                    d = abs(Analyzer.task_delay(self.workers.task_db[start_tid],self.workers.task_db[tid]))
+
+                    if d > 5:
+                        sev = "WARNING"
+                        if d > 20:
+                            sev = "ERROR"
+                            
+                        det = "Check previous called IDs what is taking so long. Consider raising workerthreadcount and group cache!"
+                        self.annotate(start_tid,"CALLED",sev,"called_recv_queue_start",details=det)
+
+                        det = "Busy state took %.0f seconds." % (d,)
+                        self.annotate(tid,"CALLED",sev,"called_recv_queue_stop",details=det)
+                    
+        
+
+    def analyzer_chain_ntlm_log_seq(self,c,msg=None,content=True):
+
+        m = ""
+        if msg:
+           m = msg 
+            
+        logger_analyzer.warning("[ntlm] [note]  ID "+c+": "+m)
+
+        if content: 
+            logger_analyzer.warning(pprint(self.chain['ntlm_seq'][c]))
+            for cc in self.chain['ntlm_seq'][c]:
+                logger_analyzer.info(pprint(self.workers.task_db[cc]))        
+        
+            logger_analyzer.warning("--- ")
+        
+    
+    def analyze_chain_ntlm_seq(self):
+        logger_analyzer.debug("[ntlm]... processing 'ntlm_seq' chain: start")   
+        
+        if len(self.chain['ntlm_seq'].keys()) == 0:
+            return
+        
+        ntlm_not_received = []
+        ntlm_received = []
+        ntlm_received_deltas = []
+        ntlm_error = []
+        
+        for c in self.chain['ntlm_seq'].keys():
+
+            logger_analyzer.debug("analyze_chain_ntlm_seq: processing self.chain['ntlm_seq'][%s]",(str(c),))
+            # type1 message - processed
+            t1_ntlm1 = self.chain['ntlm_seq'][c][0]
+            t1_ntlm1_called = self.workers.task_db[t1_ntlm1]['an']['called']
+                        
+            # calculate time difference
+            l = len(self.chain['ntlm_seq'][c]) 
+            if l == 2:
+
+                # type1 message - just arrived - looking for it using 'called' analyzer stack in the task_data
+                t1_called1 = None
+                
+                t2_ntlm2 = self.chain['ntlm_seq'][c][1]
+                t2_ntlm2_called = self.workers.task_db[t2_ntlm2]['an']['called']
+                t2_end = Analyzer.task_end(self.workers.task_db[t2_ntlm2]).split()[1]
+                t2_delta = abs(Analyzer.task_delay(self.workers.task_db[t2_ntlm2],self.workers.task_db[t2_ntlm2]))
+
+                user = "??"
+                domain = '??'
+                
+                try:
+                    user = self.workers.task_db[t2_ntlm2]['values']['user'][0]
+                    domain = self.workers.task_db[t2_ntlm2]['values']['domain'][0]
+                except KeyError:
+                    pass
+                
+                
+                if t1_ntlm1_called in self.chain['called'].keys():
+                    t1_called1 = self.chain['called'][t1_ntlm1_called][0]
+                    #t1_struct = self.workers.task_db[t1]
+                    #logger_analyzer.info(str(t1_struct))
+                    #return
+     
+                    d =  abs(Analyzer.task_delay(self.workers.task_db[t1_called1],self.workers.task_db[t2_ntlm2]))
+                    t1_begin = Analyzer.task_begin(self.workers.task_db[t1_called1]).split()[1]
+                    t1_delta = abs(Analyzer.task_delay(self.workers.task_db[t1_called1],self.workers.task_db[t1_called1]))
+                    
+
+                    logger_analyzer.debug("[ntlm]... NTLM ID %s: (t1 queued %s: %s, t3 sent %s: %s) delay %.2f (%.2f,%.2f)" % (c,t1_ntlm1_called,t1_begin, t2_ntlm2_called,t2_end, d,t1_delta,t2_delta))
+                    ntlm_received_deltas.append(int(d)) 
+                    
+                    if(d > 20):
+                        t1_called2 = self.chain['called'][t1_ntlm1_called][1]
+                        t2_ntlm1 = self.chain['called'][t2_ntlm2_called][0]
+                        
+                        det = "total processing time for %s\%s is %d seconds (tasks chain %s,%s,%s,%s)" % (domain,user,d,t1_called1,t1_called2,t2_ntlm1,t2_ntlm2)
+                        
+                        #self.analyzer_chain_ntlm_log_seq(c,"too big delay in processing response!",content=False)
+                        self.annotate(t1_called1,"NTLM","WARNING","ntlm_big_delay",details=det)
+                        self.annotate(t1_called2,"NTLM","WARNING","ntlm_big_delay",details=det)
+                        self.annotate(t2_ntlm1,"NTLM","WARNING","ntlm_big_delay",details=det)
+                        self.annotate(t2_ntlm2,"NTLM","WARNING","ntlm_big_delay",details=det)
+                        
+                        self.analyze_chain_ntlm_type1(t1_called2)
+                        self.analyze_chain_ntlm_type3(t2_ntlm2)
+                        
+
+                else:
+                    logger_analyzer.debug("[ntlm]... NTLM ID %s: (t1 queued %s: %s, t3 sent %s: %s) delay ?? (<?>.%.2f)" % (c,t1_ntlm1_called,'<???>', t2_ntlm2_called,t2_end,t2_delta))
+                
+                ntlm_received.append(c)
+                
+
+            elif l > 2:
+                logger_analyzer.warning("[ntlm]... NTLM ID %s: expected 2 entries, got %d" % (c,l))
+                ntlm_error.append(c)
+            elif l == 1:
+	      
+	        try:
+		    logger_analyzer.debug("[ntlm]... NTLM ID %s: TYPE3 was not received" % (c,))
+		    t1_called1 = self.chain['called'][t1_ntlm1_called][0]
+		    t1_called2 = self.chain['called'][t1_ntlm1_called][1]
+		    det="related tasks %s,%s" % (t1_called1,t1_called2)
+		    
+		    self.annotate(t1_called1,"NTLM","ERROR","ntlm_no_type3",details=det)
+		    self.annotate(t1_called2,"NTLM","ERROR","ntlm_no_type3",details=det)
+		    self.analyze_chain_ntlm_type1(t1_called2)
+		    
+		    ntlm_not_received.append(c)
+		except KeyError:
+		    pass
+        
+        
+        
+        ntlm_received_avg = sum(ntlm_received_deltas,0.0) / len(ntlm_received_deltas)
+        ntlm_total = len(ntlm_received)+len(ntlm_not_received)+len(ntlm_error)
+        ntlm_failed = len(ntlm_not_received)+len(ntlm_error)
+        
+        logger_analyzer.info("NTLM statistics:")
+        logger_analyzer.info("NTLM statistics: Type3 received: %d [%.2fs avg. delay], only type1 recvd: %d, Error: %d" % 
+                        (len(ntlm_received),ntlm_received_avg,len(ntlm_not_received),len(ntlm_error)))
+        logger_analyzer.info("NTLM statistics: Total %d, %.2f%% failed" % (ntlm_total,100*float(ntlm_failed)/ntlm_total))
+
+
+    def analyze_chain_ntlm_type1(self,tid):
+ 
+        #"AcceptSecurityContext failed: 0x80090302"
+        cx_failed = re.compile(line_start+r'AcceptSecurityContext failed: (?P<code>0x[\da-f]+)')
+        
+        for l in self.workers.task_db[tid]['log']:
+            #logger_analyzer.info("[D]"+l)
+            det = None
+            sev = "INFO"
+
+            m = cx_failed.match(l)
+            if m:
+                err_code = m.groupdict()["code"]
+                
+                if err_code == "0x80090302":
+                    det = "Code: 0x80090302 - Possibly non-domain user? ::: MS TechSupport: SEC_E_UNSUPPORTED_FUNCTION: The function failed. A context attribute flag that is not valid (ASC_REQ_DELEGATE or ASC_REQ_PROMPT_FOR_CREDS) was specified in the fContextReq parameter."
+                    sev = "WARNING"
+                else:
+                    det = "Unknown return code: %s" % (err_code,)
+                
+                self.annotate(tid,"NTLM",sev,"ntlm_type1_cxfail",details=det)
+        
+
+    def analyze_chain_ntlm_type3(self,tid):
+        #"AcceptSecurityContext failed: 0x8009030c"
+        cx_failed = re.compile(line_start+r'AcceptSecurityContext failed: (?P<code>0x[\da-f]+)')
+        
+        for l in self.workers.task_db[tid]['log']:
+            #logger_analyzer.info("[D]"+l)
+            det = None
+            sev = "INFO"
+
+            m = cx_failed.match(l)
+            if m:
+                err_code = m.groupdict()["code"]
+                
+                if err_code == "0x8009030c":
+                    det = "Code: 0x8009030c - Possibly wrong credentails? ::: MS TechSupport: SEC_E_LOGON_DENIED: The logon failed."
+                else:
+                    det = "Unknown return code: %s" % (err_code,)
+                self.annotate(tid,"NTLM",sev,"ntlm_type3_cxfail",details=det)
+        
+
 """
 Process the file: process the file and return workers object
 """    
@@ -1309,16 +1864,27 @@ def proc_calog(fnm):
     
     return ws
 
-def analyze_workers(ws):
+def analyze_workers(ws, write_output=True):
     
     # do basic chain distribution
     ws.analyze()
     
-    # analyze if logon events are handled in time
-    ws.analyzer.analyze_called()
+    # analyze if logon events are handled in time (against called)
+    ws.analyzer.analyze_chain_called()
 
-    # wow, dump whole chain database
+    # analyze NTLM messages
+    ws.analyzer.analyze_chain_ntlm_seq()
+
+    # DEBUG: wow, dump whole chain database
     # ws.analyzer.print_chain()
+    
+    if write_output:
+        f = open_file(ws.ca_log,"ANALYZER")
+        if f:
+            nl = ws.write_tasks(f,ws.analyzer.anno_db["severity"])
+            f.close()
+            logger_analyzer.info("%d non-empty lines written to the file" % (nl,))
+
 
 def open_file(fnm,suffix=None):
     
@@ -1340,22 +1906,22 @@ def open_file(fnm,suffix=None):
     
     return f
 
-def search_chain(ws,chsrch):
-    return ws.search_chain(chsrch)
-
 def search_workers(ws,srch_string_list,srch_string_list_neg=None,prefix_lines=True):
+    logger_state.info("Line search:")
     logger_analyzer.debug("search_workers: searching positive ALL %s, negative ANY %s" % (str(srch_string_list),str(srch_string_list_neg)))
     ws.search_line(srch_string_list,srch_string_list_neg)
+
+    r = False
         
     f = open_file(ws.ca_log,"SEARCH")
     if f:
         nl = ws.write_tasks(f,{ "line search: %s/%s" % (str(srch_string_list),str(srch_string_list_neg)) : ws.search_line_result() })
         f.close()
-        logger_analyzer.info("[D] %d non-empty lines written to the file" % (nl,))
-        
-        return True
+        logger_analyzer.info("%d non-empty lines written to the file" % (nl,))
+        r = True
     
-    return False
+    logger_state.info("done!")
+    return r
 
 
     
@@ -1373,7 +1939,12 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
 
     opened_files = {}
 
+    dot_counter = time.time()
+    tasks_written = 0
+    logger_state.info("About to write %d tasks" % (len(ws.task_db_list),))
+    
     for t_id in ws.task_db_list:
+        
         # because we are appeding gids (t_id here) immediatelly as they appear in the log,
         # we are not sure if the db was filled
         if t_id not in ws.task_db.keys():
@@ -1389,7 +1960,7 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
         
         target = os.path.join(d,f + ".DEFAULT.log")
         
-        if method == "worker":
+        if method == "workers":
             target = os.path.join(d,f + "." + ws.task_db[t_id]['role'] + "_" + pid + ".log")
         elif method == "role":
             target = os.path.join(d,f + "." + ws.task_db[t_id]['role'] + "_all.log")
@@ -1415,10 +1986,24 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
             
             logger_state.debug("[SPLIT] writing in the file: '%s' line: '%s'" % (target,l_w))
             opened_files[target].write(l_w)
+
+        if "anno" in ws.task_db[t_id].keys():
+            for a in ws.task_db[t_id]["anno"]:
+                l_w = Analyzer.annotate_format(a) + '\n'
+
+                logger_state.debug("write_task: annotation line to write: '%s'" % (l_w,))
+                opened_files[target].write(l_w)        
         
         if task_separator:
             opened_files[target].write("\n\n")
-            
+
+        
+        tasks_written+=1
+        if time.time() - dot_counter > 10:
+            perc = 100*tasks_written/len(ws.task_db_list);
+            logger_state.info('%d tasks written ... (%2.1f%%)' % (tasks_written,perc,))
+            dot_counter = time.time()
+        
             
     for f in opened_files.keys():
         try:
@@ -1437,6 +2022,8 @@ def parse_args():
                                      epilog="""Created by Ales Stibal <astibal@fortinet.com>, L2 TAC Prague, Fortinet """)
     parser.add_argument('-cl','--calog', dest='calog',default='CollectorAgent.log',
                        help='collector agent log file (default: CollectorAgent.log)')
+
+    parser.add_argument('-i','--interactive', dest='interact',default=False,help="Load the file and run into interactive mode",const=True,nargs='?')
 
     parser.add_argument('--no-prefixes',dest='no_prefixes',default=False,help="While processing, each line is prefixed with it's task id. This command will avoid this.", const=True, nargs='?')
     
@@ -1478,7 +2065,7 @@ checks and is able to warn about noticeworthy details, which could be easily
 overlooked.
 
 !! Please note that Canasta is new piece of code. Make sure that your judgements 
-!! are not completely dependant on the Canasta outptut and are verified manually.
+!! are not completely dependent on the Canasta outptut and are verified manually.
 
 
 1. Separation to the (so called) tasks
@@ -1605,15 +2192,17 @@ all of the tasks:
  
  --chsearch <keyword>:<match_type>:<expression>
                keyword: which relation line you are looking for? 
-                        ip     - ip1 or ip2 (see bellow)
-                        wksta  - workstation name 
-                        user   - username 
-                        domain - domain of the user
-                        ip1    - primary ip address reported by dcagent
-                        ip2    - secondaty ip address reported by dcagent
-                        called - logon even id : displays only messages of 
-                                 dcagent-io-recv and logons-msg 
-                                 workers. (see worker role)
+                        ip       - ip1 or ip2 (see bellow)
+                        wksta    - workstation name 
+                        user     - username 
+                        domain   - domain of the user
+                        ip1      - primary ip address reported by dcagent
+                        ip2      - secondaty ip address reported by dcagent
+                        called   - logon even id : displays only messages of 
+                                   dcagent-io-recv and logons-msg 
+                                   workers. (see worker role)
+                        ntlm_seq - NTLM sequential number as it comes from 
+                                   Fortigate
             
             expression: pattern used for matching the keyword value. No default.
             
@@ -1631,13 +2220,24 @@ all of the tasks:
             For the safer usage use apostrophes for the <expression> instead of 
                         quotes.
             
-            EXAMPLE 1:
+            EXAMPLE 1 (regex ignoring cases):
                --chsearch wksta::'PC[0-1]+.lab.net'
-            2:
-               --chsearch ip::'10.31.8.0/24'
+            2 (ip, treating as IP):
+               --chsearch ip:ip:'10.31.8.0/24'
  
             All matching tasks are saved in the file CollectorAgent.log.CHAIN.log.
             
+ 
+ 4. Interactive mode [under development]
+ Are you doing some more complex research with large data? Then parsing all files
+ over again is tedious. There was an intention to save "cache" data file with
+ result of parsing, however, loading this file would take similar time compared to
+ parse it again.
+ Interactive mode paritally solves this problem, since it loads data just once. 
+ It's up to you what you will really do with them. Commands are very similar as the
+ arguments of canasta itself. Please take a look on 'help' command.
+ 
+ Interactive mode is activated with --interactive, or -i option.
                        
  BUGS AND LIMITATIONS:
  =====================
@@ -1655,9 +2255,41 @@ Written by Ales Stibal <astibal@fortinet.com>, Fortinet, L2 TAC Prague (c) 2013
 def print_man(arg_parser,args):
     print man_main
     
+
+class CanastaShell(cmd.Cmd):
+    def __init__(self,args):
+        cmd.Cmd.__init__(self)
+        self.prompt = 'canasta> '
+        self.workers_ = None
+        self.args = args
+    
+    def set_workers(self,w):
+        self.workers_ = w
+    
+    def get_workers(self):
+        return self.workers_
+    
+    def do_analyze(self,arg):
+        logger_state.info("Analyzing:" )
+        analyze_workers(self.workers_,write_output=(self.args.split_by == 'none'))
+        logger_state.info("done!")          
+
+    def do_test(self,arg):
+        logger_state.info(pformat(arg))
+    
+    def do_chsearch(self,arg):
+        logger_state.info("Chain search:" )
+        
+        i_var = arg
+        if type(arg) != type([]):
+            i_var = [arg,]
+        self.get_workers().search_chain(i_var)        
+        
+        logger_state.info("done!")         
     
 def main():
     arg_parser,args = parse_args()
+    sh = CanastaShell(args)    
     
     if len(sys.argv) == 1:
         arg_parser.print_help()
@@ -1680,41 +2312,43 @@ def main():
     logger_analyzer.setLevel(int(args.debug_analyzer))
     logger_state.debug("loglevel set to: %d" % (int(args.debug_state),))    
     logger_analyzer.debug("loglevel set to: %d" % (int(args.debug_analyzer),))
+
+
+    # Process errors in used options
     
+    # we don't support commbined chsearch with llsearch!
+    if args.chsearch and args.search:
+        logger_state.error("Combination of chain search and line-level search is not supported.")
+        logger_state.error("Contact sales@fortinet.com for a NFR ;-)")
+        return    
     
     # Do the task used in all cases:
     start = time.time()
 
-    ws = proc_calog(args.calog)          
-    
-    if args.split_by != 'none':
-        split_workers(ws,args.calog,args.split_by, not args.no_prefixes)
-    
-    if args.chsearch and args.search:
-        logger_state.error("Combination of chain search and line-level search is not supported.")
-        logger_state.error("Contact sales@fortinet.com for a NFR ;-)")
-        return
-    
-    
+    ws = proc_calog(args.calog)       
+    sh.set_workers(ws)
+
     # fill the condition with anything which will utilize analyzer engine
-    if args.analyze or ( args.chsearch or args.chsearch ):
-        logger_state.info("Analyzing:" )
-        analyze_workers(ws)
-        logger_state.info("done!")  
+    # make it before anything else, so outputs can benefit from having analysis done already
+    if args.analyze or args.chsearch or args.chsearch or args.interact:
+        sh.do_analyze(None)    
 
     if args.chsearch:
-        logger_state.info("Chain search:" )
-        search_chain(ws,args.chsearch)        
-        logger_state.info("done!") 
+        sh.do_chsearch(args.chsearch)
         
     if args.search or args.search_neg:
         # if only negative search is present, set positive to match all lines
         if not args.search: args.search=['.*',]
-        
-        logger_state.info("Line search:")
-        logger_state.debug("Line search: '%s': extra processing, please standby:" % (args.search,))
         search_workers(ws,args.search,args.search_neg,not args.no_prefixes)
-        logger_state.info("done!")
+
+    
+    if args.split_by != 'none':
+        split_workers(ws,args.calog,args.split_by, not args.no_prefixes)
+    
+    if args.interact:
+        logger_state.info("Entering interactive mode!")
+        sh.cmdloop()
+        return
         
     t = time.time() - start
     logger_state.info("Processing finished in %.2f secs!" % (t,))
