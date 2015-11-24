@@ -525,6 +525,8 @@ class Workers:
         suf = self.chsearch_suffix
         if not suf:
             suf = "CHAIN"
+        else:
+            suf = "CHAIN." + suf
 
         #pprint(r)
 
@@ -2034,6 +2036,7 @@ def parse_args():
     parser.add_argument('-lsn','--llsearch-neg', dest='search_neg', action="append", help='Line-level search: task match is canceled if any of this expressions are matched.')
     
     parser.add_argument('-chs','--chsearch', dest='chsearch', action="append", help='Chain-level search: write to file all tasks where chain is matched by regex. Form: --chsearch ip:<opt_type>:"<my-regexp>"')
+    parser.add_argument('-cho','--chout', dest='chout', action="append", help='Chain-level search: modify filename suffix, instead of <filename>.CHAIN.log write to <filename>.CHAIN.<suffix>"')
     
     parser.add_argument('--debug-state', dest='debug_state',default=20,help='State machine verbosity: 50=critical, 40=errror, 30=warning, 20=information, 10=debug',const=10,nargs='?')
     parser.add_argument('--debug-analyzer', dest='debug_analyzer',default=20,help='Analyzer verbosity: 50=critical, 40=errror, 30=warning, 20=information, 10=debug',const=10,nargs='?')
@@ -2277,12 +2280,14 @@ class CanastaShell(cmd.Cmd):
     def do_test(self,arg):
         logger_state.info(pformat(arg))
     
-    def do_chsearch(self,arg):
+    def do_chsearch(self,arg,suf=None):
         logger_state.info("Chain search:" )
         
         i_var = arg
         if type(arg) != type([]):
             i_var = [arg,]
+            
+        self.get_workers().chsearch_suffix = suf
         self.get_workers().search_chain(i_var)        
         
         logger_state.info("done!")         
@@ -2334,7 +2339,12 @@ def main():
         sh.do_analyze(None)    
 
     if args.chsearch:
-        sh.do_chsearch(args.chsearch)
+        suf = None
+        if args.chout:
+             # merge them all into dotted separate single suffix
+             suf = ".".join(args.chout)
+             
+        sh.do_chsearch(args.chsearch,suf)
         
     if args.search or args.search_neg:
         # if only negative search is present, set positive to match all lines
