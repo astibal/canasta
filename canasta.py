@@ -949,7 +949,7 @@ class Analyzer:
             i = 0
             for l in task_data['log']:
                 #logger_analyzer.debug("Searching ALL '%s' and not ANY '%s' in '%s'" % (str(srch),str(srch_neg),l))
-                m = re.search(s,l)
+                m = re.search(s,l,flags=re.IGNORECASE)
                 if m:
                     gid = task_data['gid']
                     role = task_data['role']
