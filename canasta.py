@@ -11,7 +11,7 @@ __disc__=\
    License: BSD original license
 """
 
-__version__="0.1.4e"
+__version__="0.1.4f"
 
 import sys
 import time
