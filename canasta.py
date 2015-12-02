@@ -11,7 +11,7 @@ __disc__=\
    License: BSD original license
 """
 
-__version__="0.1.4f"
+__version__="0.1.4g"
 
 import sys
 import time
@@ -78,9 +78,9 @@ func_logon_event=r'logon event\((?P<called>\d+)\): len:(?P<length>\d+) dc_ip:(?P
 r_func_logon_event = re.compile(line_start+func_logon_event)
 func_logon_event_ex=r'logon event\((?P<called>\d+)\): len:(?P<length>\d+) dc_ip:(?P<dc_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) time:(?P<dc_timestamp>\d+) len:\d+ data:(?P<wksta>[\w\d.-_]+)/(?P<domain>\w+)/(?P<user>[^\\ ]+) ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
 r_func_logon_event_ex = re.compile(line_start+func_logon_event_ex)
-func_new_logon_0=r'(?P<function>new logon), +workstation:(?P<wksta>[^\\]+) +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+func_new_logon_0=r'(?P<function>new logon), +workstation:(?P<wksta>[^\ ]+)( \(cached:[^ ]+\))? +ip:(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
 r_func_new_logon_0 = re.compile(line_start+func_new_logon_0)
-func_new_logon_1=r'(?P<function>new logon), +workstation:(?P<wksta>[^\\]+) +ip not changed +(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+func_new_logon_1=r'(?P<function>new logon), +workstation:(?P<wksta>[^ ]+)( \(cached:[^ ]+\))? +ip not changed +(?P<ip1>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(?P<ip2>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
 r_func_new_logon_1 = re.compile(line_start+func_new_logon_1)
 func_ntlm_user=r'user:(?P<user>[^\\]+)'
 r_func_ntlm_user = re.compile(line_start+func_ntlm_user)
@@ -535,11 +535,18 @@ class Workers:
         norm = {}
 
         for ch in r.keys():
+            logger_analyzer.debug("search_chain: result key: \n" + str(ch))
             j = -1
             for i in r[ch]:
                 j += 1
                 for ch_n in i.keys():
-                    norm["%s : %s[%d]" % (ch,ch_n,j)] = r[ch][j][ch_n]
+                    norm_key = "%s : %s[%d]" % (ch,ch_n,j)
+                    norm_val = r[ch][j][ch_n]
+                    
+                    norm[norm_key] = norm_val
+                    
+                    logger_analyzer.debug("search_chain norm key: \n" + str(norm_key))
+                    logger_analyzer.debug("search_chain norm val: \n" + str(norm_val))
 
         f = open_file(self.ca_log,suf)
         if f:
