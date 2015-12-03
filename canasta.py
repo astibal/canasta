@@ -370,7 +370,15 @@ class Worker:
         # was originally before the for loop. But we don't want to include IGNORED lines
         # in the task list
         
-        self.log.append(line.strip())    
+        line_to_append = line.strip()
+        
+        # remove truncated, unfinished unicode character
+        if line_to_append[-1] in ['\xc2', '\xc3' ]:
+            logger_state.debug("%d: removed unfinished utf-8 prefix" % (len(self.log),))
+            line_to_append = line_to_append[0:-1]
+            
+        self.log.append(line_to_append)
+        
         current_index = len(self.log)-1
         #logger_state.debug(" ... current index:" + str(current_index))            
             
@@ -722,6 +730,19 @@ class Analyzer:
         self.debug_zoom['ntlm_seq'] = []
     
     
+    def data(self):
+        ret = {}
+        ret["tasks_by_chrono"] = self.tasks_by_chrono
+        ret["tasks_by_role"] = self.tasks_by_role
+        ret["line_search_result"] = self.line_search_result
+        ret["chain"] = self.chain
+        ret["chain_keys"] = self.chain_keys
+        ret["chain_search_result"] = self.chain_search_result
+        ret["anno_db"] = self.anno_db
+        ret["debug_zoom"] = self.debug_zoom
+        
+        return ret
+    
     """
         Annotations concept
         task structure will be equipped with the key "anno" which will be a *list*
@@ -890,7 +911,7 @@ class Analyzer:
                 if matches_this_criteria and cur:
                     # all of the same criteria key matched
                     logger_analyzer.info("successful match: %s" % (cur,))
-                    matches = Analyzer.stack_dict(matches, { c:{ cur: self.chain[c][cur] }})
+                    matches = Analyzer.normalize_dict_values(Analyzer.stack_dict(matches, { c:{ cur: self.chain[c][cur] }}))
 
         Analyzer.debug_lines("search_chain[result]",matches)
 
@@ -1400,8 +1421,10 @@ class Analyzer:
                     # init chain, if it's empty
                     if c_i not in self.chain[ch].keys(): self.chain[ch][c_i] = []
 
-                    # update the chain with task GID -- this GID contains reference to the keyword!
-                    self.chain[ch][c_i].append(result_struct['gid'])
+                    # update the chain with task GID -- this GID contains reference to the keyword, but only 
+                    # if it's not there already => avoid duplicates
+                    if result_struct['gid'] not in self.chain[ch][c_i]:
+                        self.chain[ch][c_i].append(result_struct['gid'])
                     
                     # init chained in task_data
                     if 'chains' not in self.workers.task_db[result_struct['gid']].keys():
@@ -1428,19 +1451,52 @@ class Analyzer:
                             if c_i in filter_map[virtual_map[ch]]:
                                 continue
 
-                        self.chain[virtual_map[ch]][c_i].append(result_struct['gid'])
+                        # update the chain with task GID -- this GID contains reference to the keyword, but only 
+                        # if it's not there already => avoid duplicates
+                        if result_struct['gid'] not in self.chain[ch][c_i]:
+                            self.chain[virtual_map[ch]][c_i].append(result_struct['gid'])
 
                         # init chained in task_data
                         if 'chains' not in self.workers.task_db[result_struct['gid']].keys():
                             self.workers.task_db[result_struct['gid']]['values'] = {}
 
-                        # now we have results also in task_data
-                        Analyzer.stack_dict(self.workers.task_db[result_struct['gid']]['values'],result_struct)                        
+                        # now we have results also in task_data. Dont repeat items in the list, normalize result!
+                        Analyzer.stack_dict(self.workers.task_db[result_struct['gid']]['values'],result_struct)
                     
             else:
                 logger_analyzer.debug("regex group '%s' not present in the task '%s'" 
                         % (ch,result_struct['gid']))
-                    
+    
+    
+    
+    
+    @staticmethod
+    def normalize_dict_values(d):
+        if type(d) != type({}):
+            return d
+        
+        for k in d.keys():
+            cur_item = d[k]
+
+            if type(cur_item) == type([]):
+                try:
+                    conv_list = []
+                    for item in cur_item:
+                        if item not in conv_list:
+                            conv_list.append(item)
+                            
+                    logger_analyzer.debug("normalize_dict_values: Converting list: %s -> %s", str(cur_item), str(conv_list))
+                    d[k] = conv_list
+                except TypeError, e:
+                    # ignore lists of complex types
+                    pass
+            
+            elif type(cur_item) == type({}):
+                conv_dict = normalize_dict_values(cur_item)
+                d[k] = conv_dict
+                
+        
+        return d
     
     @staticmethod
     def stack_dict(d, d_add,unique=True):
@@ -2352,7 +2408,11 @@ def main():
         fnm = args.calog + '.json'
         logger_state.info("JSON dump to '%s'!" % (fnm,))
         f = open(fnm,'w+')
-        json.dump(ws.data(),f,indent=4)
+        
+        dump = {}
+        dump["workers"] = ws.data()
+        dump["analyzer"] = ws.analyzer.data()
+        json.dump(dump,f,indent=4)
         f.close()
         logger_state.info("done!")
 
