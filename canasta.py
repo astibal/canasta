@@ -816,7 +816,7 @@ class Analyzer:
                 key,typ,ex = cr.split(":",2)
             except ValueError:
                 logger_analyzer.error("Uknown criteria format: %s" % (cr,))
-                sys.exit(-1)
+                return {}
                 
             if not typ: typ = "rxi"
             #pprint([key,typ,ex])
@@ -864,7 +864,7 @@ class Analyzer:
                         m = ( ex == k )
                     elif typ == 'exi':
                         # exact match case insensitive
-                        m = ( ex == k.lower())
+                        m = ( ex.lower() == k.lower())
                     elif typ == 'ip':
                         try:
                             ex_ip = ipaddr.IPv4Network(ex)
@@ -2338,7 +2338,9 @@ def main():
         split_workers(ws,args.calog,args.split_by, not args.no_prefixes)
     
     if args.interact:
-        logger_state.info("Entering interactive mode!")
+        logger_state.info("Entering interactive mode")
+        logger_state.info("... you don't have to use quotes and apostrophes in command arguments")
+        logger_state.info("")
         sh.cmdloop()
         return
         
