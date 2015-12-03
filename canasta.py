@@ -2058,43 +2058,41 @@ def parse_args():
 
 man_main = """
 
-     Embedded MANual page for
---== CANASTA tool by Ales Stibal, Fortinet L2 TAC in Prague ==--  
-
-Important: Read bugs and limitations at the end of this manual page !!!
-Important: Read this manual, some options are not as obvious as one can expect.
-Important: All the result is ALWAYS chronologically ordered. You don't need 
-to worry Canasta will display ANYTHING out of order. The ordering is based on
-timestamp when the task started.
-
-CANASTA is the tool for better analysis of Collector Agent logs (and FSAE/FSSO 
-in general in the future).
-Canasta operates on the collector agent log. First what is Canasta doing is that 
-it opens the file, and reads it line by line. After it's done, it can do various 
-checks and is able to warn about noticeworthy details, which could be easily 
-overlooked.
-
-!! Please note that Canasta is new piece of code. Make sure that your judgements 
-!! are not completely dependent on the Canasta outptut and are verified manually.
+--== CANASTA tool by Ales Stibal, Fortinet L3 TAC in Prague ==--  
 
 
-1. Separation to the (so called) tasks
+CANASTA is the tool to make your Collector Agent issues analysis easier.
+Canasta parses FSSO Collector Agent log and packs events from it into so
+called "tasks". This is very useful on its own.
+
+Additionally, based on those "tasks", it is able to warn you about noticeworthy 
+details which could be easily overlooked.
+
+All results are chronologically ordered. The ordering is based on timestamp 
+when the task started.
+
+
+--== HOW IT WQRKS ==--
+
+1. Separation to the tasks
 ======================================
-The lines are matched against regular expresions, which will divide the lines at
-first by the process/thread id.
-Then, the second pass is  run, and the lines related to the particular  thread 
-are also separated to chunks of lines, indicating  the one enclosed  TASK 
-(say, processing  single logon event). 
-Because Canasta knows, which tasks has been run by the worker, it is  also able 
-to indicate  which (so called) ROLE the  worker represents, for example:
-dcagent-io-recv, or logons-msg). 
-During the time of using Canasta, you will get familiar with those role names. 
-Now the file is processed.
-
+The lines are matched against certain set of regular expresions. We are looking 
+basically for patterns which divide log into self-contained tasks, for example 
+logon event of some user, or IP check on single workstation name.
 
 At this moment, you can direct canasta script to save those tasks and lines, 
 depending on which point of view you are interested in:
  
+ --split-by reorder :  This will save all tasks chronologically into SINGLE file, 
+                       ordered by task creation timestamp.
+                       Result is almost the same as the original CollectorAgent.log, 
+                       but instead of mess of unrelated lines you have list
+                       of tasks packed together.
+                       
+                       By far the most useful split method.
+                       
+                       Output filename is: CollectorAgent.log.reordered.log
+
  --split-by worker  :  sometimes, you need to study output of one particular 
                        thread. This option will create files for each worker, 
                        indicating also the worker role.
@@ -2111,23 +2109,14 @@ depending on which point of view you are interested in:
                             ... so the thread id is replaced by all, and all 
                             tasks with this role are put to that single file.
                             
- --split-by reorder :  Sometimes, you don't want to perform the heuristics and 
-                       you just need to make the log more readable.
-                       This will save all tasks chronologically to SINGLE file, 
-                       ordered by task creation timestamp.
-                       Result is almost the same as the orig. CollectorAgent.log, 
-                       BUT the worker task lines are neighboring, so you can read 
-                       the log without skipping other thread lines.
-                       
-                       Filename is created: CollectorAgent.log.reordered.log
 
---split-by none     :  that's indicating you are not looking for task separation 
-                       into the files. Probably you want Canasta to do heurstics
+--split-by none     :  use this option if you aren't looking for task separation 
+                       at all. Probably you want Canasta to do heurstics
                        only, so splitting the lines into files is not needed.
                            
- --no-prefixes      :  In all cases (except "none" is used), the lines  are 
-                       prepended  by TASK ID. This task id consists of tuple of 
-                       decimal numbers separated by hyphen, e.g. 12312-0-34. 
+ --no-prefixes      :  In all cases the output file lines  are prepended  by 
+                       TASK ID. This task id consists of tuple of decimal numbers 
+                       separated by hyphen, e.g. 12312-0-34. 
                        This means the thread id is 12312, and the line belongs 
                        to 34th  task processed by  the thread. Zero in the 
                        middle is ID of tge sub-parser. Good example of 
@@ -2141,64 +2130,49 @@ depending on which point of view you are interested in:
                        
 2. Line-level search
 ====================
-Regarless you have instructed Canasta to save/split the tasks to file or not, 
-now you have possibility to make some basic, not much intelligent search through
-all of the tasks:
+Regarless you have used --split-by feature, you have the possibility to perform
+                       case-ignoring regex search in all detected tasks:
 
  --llsearch <regexp>:  Use regular expression to match each line in each task. 
-                       If ANY task line matches your regexp, this whole task is 
-                       considered as matching. Note that the regular expression
-                       is just up to you. You can use any regex you want. Just 
-                       take into the account that you are matching only single 
-                       line.
-                       All matching tasks are saved in the file
-                       CollectorAgent.log.SEARCH.log.
-                       This file is always rewritten and is NOT named by your 
+                       If at least single task line matches your regexp, this whole 
+                       task is matching. 
+                       Matching tasks are saved into CollectorAgent.log.SEARCH.log
+                       file. It is always rewritten and is NOT named by your 
                        regexp, as it can be quite complex.
                        
-                       You can stack those line-level searches. If more searches 
-                       are used, the task is considered matching, if ALL of 
-                       --llsearch arguments match in the single task, regardless 
-                       if the match is done on single or more lines.
+                       You can use this option several times. Do so if you want 
+                       the task to match ALL of them (it doesn't matter where 
+                       in the task).
                        
                        You can use  eg. --llsearch 'foo' --llsearch 'that' \\
                                 --llsearch 'bars'.
+
                        
  --llsearch-neg <neg_regexp>:
                        If this option is used, any line in the task must not 
-                       match this regexp. Matching this regular expression 
-                       surpresses the final match decision.
-                       Again, this option could be stacked like --llsearch. 
-                       Bare in mind, the logic of final match surpressing is 
-                       different: 
-                       occurence of a match of any of neg_regexp arguments is 
-                       surpressing the final task match.
-                       This can be used for example to searching only in logon 
-                       events, where group cache is not hit and new group lookup
-                       was being done.
-            
-    NOTE: --llsearch is currently not aware of any chain searches (see below)
-          and searches across all tasks.
-          This is, nonetheless, on the short-term roadmap.
+                       match this regexp, regardless what --llsearch result is.
+                       Matching this regular expression prevents the task to
+                       be finally positively matched.
                        
+                       This option could be used several times too. Task
+                       matches ANY of --llsearch-neg expressions is prevented 
+                       to be finally matched.
+                                   
                        
  3 Chain-level search
  ====================
- Maybe you remember that Canasta is working with some TASKs. Those tasks 
- are being recognized by message regex patterns, which also contain 'keywords'. 
- For example, we have keywords 'ip', 'user', 'wksta', 'domain', ... 
- Values of those keywords are stored, and based on them, there is built a tree
- structure, which is keeping relation between tasks which contain the same value 
- of each particular keyword.
- You can enable building process of this tree by passing '--analyze' argument.
  
- After the tree is built, you can search through of it. The tree has following 
- logic:
-  KEYWORD   VALUE
- 'wksta'-+-'pc1.net.local' -> list of TASKS: eg 345-1, 412-1
-         +-'pc2.net.local' -> list of TASKS: eg 345-2, 412-2
+ Chain level search is performed on the list of tasks and is independent on --llsearch
+ options (they cannot be used concurently). 
+ This search is aware of what log lines belonging to the task mean. Thus it is 
+ able to interpret some messages and it content as IP address, usernames, workstations,
+ etc.
+ This information is saved into internal database I call "chains", since it contains
+ lists of related events, based on metadata value. For example, there is a chain
+ of events related to the workstation ABC.
+ You can use --chsearch option to search for such a chain, based on its type and value.
  
- You can search this tree. See below:
+ You can search it as follows:
  
  --chsearch <keyword>:<match_type>:<expression>
                keyword: which relation line you are looking for? 
@@ -2232,7 +2206,8 @@ all of the tasks:
             
             EXAMPLE 1 (regex ignoring cases):
                --chsearch wksta::'PC[0-1]+.lab.net'
-            2 (ip, treating as IP):
+               
+            EXAMPLE 2 (ip, treating as IP):
                --chsearch ip:ip:'10.31.8.0/24'
  
             All matching tasks are saved in the file CollectorAgent.log.CHAIN.log.
