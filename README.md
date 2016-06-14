@@ -3,13 +3,16 @@ Canasta is tool for helping to read FSSO CA CollectorAgent.log file.
 
 Most typical tasks is running 
 
-```--split-by reorder
+```
+--split-by reorder
 ```
 or 
-```--llsearch fail
+```
+--llsearch fail
 ```
 or 
-``` --chseach 'wksta::PC123'
+``` 
+--chseach 'wksta::PC123'
 ```
 
 
