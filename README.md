@@ -1,19 +1,21 @@
 # Overview
-Canasta is tool for helping to read FSSO CA CollectorAgent.log file.
+Canasta is tool which helps to read FSSO CA CollectorAgent.log file. It's used to parse it, 
+and dump the file reordered, or reordered with only information you are looking for.
 
-Most typical tasks is running 
+Most typical options being used: 
 
 ```
---split-by reorder
+--split-by reorder  # reorders the file the way that neighboring lines belong to the same thread
 ```
 or 
 ```
---llsearch fail
+--llsearch fail     # finds relevant log parts (so called "tasks") which contain 'fail' on any line inside
 ```
 or 
 ``` 
---chseach 'wksta::PC123'
+--chseach 'wksta::PC123'  # finds relevant log parts (so called "tasks") which relate to workstation 'PC123'
 ```
+... but of course you can find more complex possibilities. ;)
 
 
 # HOW IT WORKS -- dump from manual page (canasta.py -m)
