@@ -1,5 +1,16 @@
+# Overview
+Canasta is tool for helping to read FSSO CA CollectorAgent.log file.
 
-# HOW IT WQRKS
+Most typical tasks is running 
+
+```--split-by reorder```
+ or 
+```--llsearch fail``
+or 
+``` --chseach 'wksta::PC123'
+
+
+# HOW IT WORKS -- dump from manual page (canasta.py -m)
 
 ## 1. Separation to the tasks
 
