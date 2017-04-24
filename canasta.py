@@ -210,6 +210,9 @@ logger_analyzer.setLevel(logging.DEBUG)
 
 logger_plain.addHandler(chh)
 logger_plain.setLevel(logging.INFO)
+
+FILE_SUFFIX = None
+FILE_CALOG = None
     
 """
  Worker: class representing single worker thread on Collector agent. 
@@ -362,9 +365,14 @@ class Worker:
                 m_r = self.new_state_events[n]
                 
                 logger_state.debug("Worker "+ self.pid + ": new state: " + m_r + " : " + line)
+                
+                #register new event in the list
+                self.handle_start()
+                
                 if m_r == Worker.ROLE_IGNORED:
                     logger_state.debug('Ignoring: %s' % (line,))
                     return None
+                
                 break
 
         # was originally before the for loop. But we don't want to include IGNORED lines
@@ -402,11 +410,16 @@ class Worker:
             
         return None
 
+    def handle_start(self):
+        task_data = {}
+        task_data['gid'] = "%s-%s-%s" % (self.pid,self.sub_pid,len(self.task_list))
+        self.parent.task_db_list.append(task_data['gid'])
     
     """
     handle_finish: complete the task, fill structures
     """
     def handle_finish(self):
+        logger_state.debug("Worker[%s] finish called" % (self.pid,))
         task_data = {}
         task_data['pid'] = self.pid
         task_data['sub_pid'] = self.sub_pid
@@ -428,7 +441,9 @@ class Worker:
 
 
     def finish_task(self, task_data):
+        logger_state.debug("Worker[%s] finish_task called" % (self.pid,))
         if self.parent != None:
+            logger_state.debug("Worker[%s] executing parent finish_task" % (self.pid,))
             self.parent.finish_task(task_data)
     
 
@@ -474,15 +489,26 @@ class Workers:
         
         FIXME: new implementation should use sqlite
         """        
+        
+        logger_state.debug("Workers.finish_task called")
+        
         # fill the data for the current task, since we hit the beginning the new one
         t_id_this = "%s-%s-%s" % (task_data['pid'],task_data['sub_pid'],task_data['id'])
         self.task_db[t_id_this] = task_data
-        
+
+        #logger_state.debug("Workers.finish_task: data dump:")
+        #logger_state.debug(pformat(self.task_db[t_id_this]))
         
         # because we finish the task when the new one is recognized
         #t_id_next = "%s-%s" % (task_data['pid'],task_data['id']+1)
         t_id_next = "%s-%s-%s" % (task_data['pid'],task_data['sub_pid'],task_data['id']+1)
-        self.task_db_list.append(t_id_next)
+        
+        
+        # Don't forget to initialize first task ID!
+        #if task_data['id'] == 0:
+        #    self.task_db_list.append(t_id_this)
+        #    
+        #self.task_db_list.append(t_id_next)
         
     def analyze(self):
         count = 0
@@ -589,7 +615,9 @@ class Workers:
         return True
     
     def finish(self):
+        logger_state.debug("Workers.finish called");
         for w in self._workers:
+            logger_state.debug("  executing worker %s handle_finish" % (w));
             self._workers[w].handle_finish()
         
     def proc_line(self,line_raw):
@@ -1165,7 +1193,6 @@ class Analyzer:
             
             m = r_func_ntlm_remove_q.match(l)
             if m:
-                
                 LOGON_NTLM = True
                 
                 c = m.group('called')
@@ -1834,8 +1861,10 @@ class Analyzer:
 		    pass
         
         
-        
-        ntlm_received_avg = sum(ntlm_received_deltas,0.0) / len(ntlm_received_deltas)
+        ntlm_received_avg = 0
+        if len(ntlm_received_deltas) > 0:
+            ntlm_received_avg = sum(ntlm_received_deltas,0.0) / len(ntlm_received_deltas)
+            
         ntlm_total = len(ntlm_received)+len(ntlm_not_received)+len(ntlm_error)
         ntlm_failed = len(ntlm_not_received)+len(ntlm_error)
         
@@ -2010,12 +2039,17 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
     
     for t_id in ws.task_db_list:
         
+        if t_id == '256-0-0':
+            pprint(ws.task_db[t_id])
+        
         # because we are appeding gids (t_id here) immediatelly as they appear in the log,
         # we are not sure if the db was filled
         if t_id not in ws.task_db.keys():
+            if t_id != ws.task_db_list[-1]:
+                logger_state.info("task %s not in task_db" % (t_id,))
             continue
     
-        logger_state.debug("Processing task: %s, role=%s" % (t_id,ws.task_db[t_id]['role']))
+        #logger_state.info("Processing task: %s, role=%s" % (t_id,ws.task_db[t_id]['role']))
        
         norm = os.path.normpath(calog_fnm)
         d = os.path.dirname(norm)
@@ -2304,33 +2338,56 @@ class CanastaShell(cmd.Cmd):
         self.workers_ = None
         self.args = args
     
+    def emptyline(self):
+        pass
+    
     def set_workers(self,w):
         self.workers_ = w
     
     def get_workers(self):
         return self.workers_
+
+    def do_read(self):
+        global FILE_CALOG
+        
+        logger_state.info("Reading file: " + FILE_CALOG )
+        ws = proc_calog(FILE_CALOG)
+        self.set_workers(ws)
+        logger_state.info("done!")
     
     def do_analyze(self,arg):
+        global FILE_CALOG
+        
         logger_state.info("Analyzing:" )
         analyze_workers(self.workers_,write_output=(self.args.split_by == 'none'))
-        logger_state.info("done!")          
+        logger_state.info("done!")
 
     def do_test(self,arg):
         logger_state.info(pformat(arg))
     
-    def do_chsearch(self,arg,suf=None):
+    def do_chsearch(self,arg):
+        global FILE_SUFFIX
+        
         logger_state.info("Chain search:" )
         
         i_var = arg
         if type(arg) != type([]):
             i_var = [arg,]
             
-        self.get_workers().chsearch_suffix = suf
+        if FILE_SUFFIX:
+            self.get_workers().chsearch_suffix = FILE_SUFFIX
         self.get_workers().search_chain(i_var)        
         
         logger_state.info("done!")         
     
+    def do_suffix(self,arg):
+        global FILE_SUFFIX
+        if arg:
+            FILE_SUFFIX = arg
+    
 def main():
+    global FILE_SUFFIX,FILE_CALOG
+    
     arg_parser,args = parse_args()
     sh = CanastaShell(args)    
     
@@ -2349,12 +2406,19 @@ def main():
     if not os.path.exists(args.calog):
         logger_state.critical("File '%s' is not readable, or does not exist!" % (args.calog,))
         sys.exit(-1)
+    else:
+        FILE_CALOG = args.calog
 
     # init the logging 
     logger_state.setLevel(int(args.debug_state))
     logger_analyzer.setLevel(int(args.debug_analyzer))
     logger_state.debug("loglevel set to: %d" % (int(args.debug_state),))    
     logger_analyzer.debug("loglevel set to: %d" % (int(args.debug_analyzer),))
+
+    # set FILE_SUFFIX
+    if args.chout:
+            # merge them all into dotted separate single suffix
+            FILE_SUFFIX = ".".join(args.chout)
 
 
     # Process errors in used options
@@ -2368,21 +2432,18 @@ def main():
     # Do the task used in all cases:
     start = time.time()
 
-    ws = proc_calog(args.calog)       
+    ws = proc_calog(FILE_CALOG)
     sh.set_workers(ws)
 
     # fill the condition with anything which will utilize analyzer engine
     # make it before anything else, so outputs can benefit from having analysis done already
-    if args.analyze or args.chsearch or args.chsearch or args.interact:
-        sh.do_analyze(None)    
+    if args.analyze or args.chsearch or args.chsearch:
+        # interact will do it on its own
+        if not args.interact:
+            sh.do_analyze(None)    
 
     if args.chsearch:
-        suf = None
-        if args.chout:
-             # merge them all into dotted separate single suffix
-             suf = ".".join(args.chout)
-             
-        sh.do_chsearch(args.chsearch,suf)
+        sh.do_chsearch(args.chsearch)
         
     if args.search or args.search_neg:
         # if only negative search is present, set positive to match all lines
