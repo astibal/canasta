@@ -414,7 +414,12 @@ class Worker:
     def handle_start(self):
         task_data = {}
         task_data['gid'] = "%s-%s-%s" % (self.pid,self.sub_pid,len(self.task_list))
-        self.parent.task_db_list.append(task_data['gid'])
+        
+        if task_data['gid'] in self.parent.task_db_list:
+            #logger_state.info("task %s already in task list" % (task_data['gid'],))
+            pass
+        else:
+            self.parent.task_db_list.append(task_data['gid'])
     
     """
     handle_finish: complete the task, fill structures
@@ -1849,8 +1854,12 @@ class Analyzer:
 	      
 	        try:
 		    logger_analyzer.debug("[ntlm]... NTLM ID %s: TYPE3 was not received" % (c,))
-		    t1_called1 = self.chain['called'][t1_ntlm1_called][0]
-		    t1_called2 = self.chain['called'][t1_ntlm1_called][1]
+		    t1_called1 = ''
+		    t1_called2 = ''
+		    if len(self.chain['called'][t1_ntlm1_called]) > 0:
+                           t1_called1 = self.chain['called'][t1_ntlm1_called][0]
+		    if len(self.chain['called'][t1_ntlm1_called]) > 1:
+                           t1_called2 = self.chain['called'][t1_ntlm1_called][1]
 		    det="related tasks %s,%s" % (t1_called1,t1_called2)
 		    
 		    self.annotate(t1_called1,"NTLM","ERROR","ntlm_no_type3",details=det)
