@@ -98,7 +98,8 @@ r_func_dns_cannot_resolve = re.compile(line_start+func_cannot_resolve)
 func_dns_query=r'DNS lookup: workstation name:(?P<wksta>[^,]+), dns server:\([^\)]+\), ip:[\w\d]+:[\w\d]+'
 r_func_dns_query = re.compile(line_start+func_dns_query)
 # Fortigate receive IO workers (FIXME)
-func_fortigate_io_recv=r'Bytes received from FortiGate: (?P<bytes>\d+)'
+#func_fortigate_io_recv=r'Bytes received from FortiGate: (?P<bytes>\d+)'
+func_fortigate_io_recv=r'ready to read from socket'
 r_func_fortigate_io_recv = re.compile(line_start+func_fortigate_io_recv)
 func_fortigate_io_ntlm_req=r'NTLM packet: add to queue, called:(?P<called>\d+), current:\d+'
 r_func_fortigate_io_ntlm_req = re.compile(line_start+func_fortigate_io_ntlm_req)
@@ -2038,9 +2039,6 @@ def split_workers(ws,calog_fnm,method,prefix_lines=True,task_separator=True):
     logger_state.info("About to write %d tasks" % (len(ws.task_db_list),))
     
     for t_id in ws.task_db_list:
-        
-        if t_id == '256-0-0':
-            pprint(ws.task_db[t_id])
         
         # because we are appeding gids (t_id here) immediatelly as they appear in the log,
         # we are not sure if the db was filled
