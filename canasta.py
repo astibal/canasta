@@ -257,6 +257,9 @@ class Worker:
         # list of lines, per single state [[state_1_lines],[state_2_lines]]
         self.task_list = []
 
+        # add duplicate detection db list
+        self.task_db_list = []
+
         # create sub-worker for event poller:
         #   event poller events are not parseable in this worker state, e.p. logs
         #   follow their own state, thus creating poller sub-worker
